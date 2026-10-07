@@ -1,0 +1,66 @@
+<?php
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Employee extends Model
+{
+    use HasFactory;
+
+    protected $fillable = [
+        'user_id',
+        'employee_id',
+        'first_name',
+        'middle_name',
+        'last_name',
+        'position',
+        'department',
+        'date_hired',
+        'status',
+    ];
+
+    protected $casts = [
+        'date_hired' => 'date',
+    ];
+
+    /**
+     * An employee belongs to a user account.
+     */
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
+    /**
+     * An employee can have many attendance records.
+     */
+    public function attendances(): HasMany
+    {
+        return $this->hasMany(Attendance::class);
+    }
+
+    public function biometricCredentials(): HasMany
+    {
+        return $this->hasMany(BiometricCredential::class);
+    }
+
+    public function attendanceCorrectionRequests(): HasMany
+    {
+        return $this->hasMany(AttendanceCorrectionRequest::class);
+    }
+
+    /**
+     * Full employee name.
+     */
+    public function getFullNameAttribute(): string
+    {
+        return trim(
+            $this->first_name . ' ' .
+            ($this->middle_name ? $this->middle_name . ' ' : '') .
+            $this->last_name
+        );
+    }
+}
