@@ -210,11 +210,15 @@ class BiometricVerificationController extends Controller
             'credential_id' => ['required', 'string', 'uuid'],
             'purpose' => [
                 'sometimes',
-                'in:attendance-time-in,biometric-enrollment',
+                'in:attendance-time-in,attendance-time-out,biometric-enrollment,time-in,time-out',
             ],
         ]);
 
-        $purpose = $validated['purpose'] ?? 'attendance-time-in';
+        $purpose = match ($validated['purpose'] ?? 'attendance-time-in') {
+            'time-in' => 'attendance-time-in',
+            'time-out' => 'attendance-time-out',
+            default => $validated['purpose'] ?? 'attendance-time-in',
+        };
 
         $user = auth('api')->user();
         $employee = $user->employee;
@@ -238,7 +242,7 @@ class BiometricVerificationController extends Controller
                 $validated['verification_method']
             );
 
-        if ($purpose === 'attendance-time-in') {
+        if ($purpose !== 'biometric-enrollment') {
             $credentialQuery->whereNotNull('verified_at');
         }
 
@@ -441,8 +445,10 @@ class BiometricVerificationController extends Controller
 
             return response()->json([
                 'success' => true,
+                'credential_verified' => true,
                 'message' => 'Signed challenge verified.',
                 'biometric_verification_token' => $token,
+                'verification_token' => $token,
                 'expires_in' => 300,
             ]);
         }

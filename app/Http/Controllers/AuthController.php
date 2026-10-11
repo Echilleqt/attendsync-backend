@@ -26,13 +26,17 @@ class AuthController extends Controller
         ]);
 
         if (Auth::attempt($credentials)) {
-            $request->session()->regenerate();
+            if (Auth::user()->role !== 'admin') {
+                Auth::logout();
 
-            if (Auth::user()->role === 'admin') {
-                return redirect()->route('admin.dashboard');
+                return back()->withErrors([
+                    'email' => 'Only administrator accounts can access the backend.',
+                ])->onlyInput('email');
             }
 
-            return redirect()->route('employee.dashboard');
+            $request->session()->regenerate();
+
+            return redirect()->route('admin.dashboard');
         }
 
         return back()->withErrors([

@@ -19,6 +19,8 @@ class Attendance extends Model
         'photo_path',
         'time_out_photo_path',
         'late_starting_time_snapshot',
+        'time_in_verification_method',
+        'time_out_verification_method',
     ];
 
     protected $hidden = [

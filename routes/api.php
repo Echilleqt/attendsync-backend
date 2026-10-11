@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\AttendanceController;
 use App\Http\Controllers\Api\AttendanceCorrectionController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BiometricVerificationController;
+use App\Http\Controllers\Api\FaceRecognitionController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -14,6 +15,8 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
 
     Route::post('/logout', [AuthController::class, 'logout']);
+
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     Route::post('/attendance/time-in', [
         AttendanceController::class,
@@ -40,6 +43,11 @@ Route::middleware('auth:api')->group(function () {
         'today',
     ]);
 
+    Route::get('/attendance/history', [
+        AttendanceController::class,
+        'history',
+    ]);
+
     Route::post('/biometric/credentials', [
         BiometricVerificationController::class,
         'enroll',
@@ -64,6 +72,26 @@ Route::middleware('auth:api')->group(function () {
         BiometricVerificationController::class,
         'verify',
     ])->middleware('throttle:10,1');
+
+    Route::get('/face/status', [
+        FaceRecognitionController::class,
+        'status',
+    ]);
+
+    Route::post('/face/enroll', [
+        FaceRecognitionController::class,
+        'enroll',
+    ])->middleware('throttle:10,1');
+
+    Route::post('/face/verify', [
+        FaceRecognitionController::class,
+        'verify',
+    ])->middleware('throttle:10,1');
+
+    Route::delete('/face/revoke', [
+        FaceRecognitionController::class,
+        'revoke',
+    ]);
 
     Route::get('/attendance-correction-requests', [
         AttendanceCorrectionController::class,

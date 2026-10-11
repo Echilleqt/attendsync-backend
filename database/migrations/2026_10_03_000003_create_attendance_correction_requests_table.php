@@ -23,8 +23,8 @@ return new class extends Migration
             $table->json('original_values')->nullable();
             $table->json('approved_values')->nullable();
             $table->timestamps();
-            $table->index(['employee_id', 'attendance_date', 'status']);
-            $table->index(['status', 'created_at']);
+            $table->index(['employee_id', 'attendance_date', 'status'], 'acr_employee_date_status_idx');
+            $table->index(['status', 'created_at'], 'acr_status_created_idx');
         });
     }
 

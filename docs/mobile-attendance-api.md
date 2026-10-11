@@ -32,9 +32,17 @@ check. Never upload fingerprint data, face templates, or the private key.
    public key as pending until this signature is verified. Enrollment becomes
    active only when the response contains `credential_verified: true`; then
    read `GET /api/biometric/credentials` to confirm its server status.
-4. For Time In, request a new challenge without an enrollment purpose, sign
-   it, and post the signature to `/api/biometric/verify`. Submit the returned
-   `biometric_verification_token` with the multipart Time In request. The
+4. For attendance, show the user the available verified biometrics and let
+   them choose one for each action. Fingerprint credentials and device names
+   come from `GET /api/biometric/credentials`; check `GET /api/face/status`
+   separately for face enrollment. For fingerprint Time In, request a challenge with
+   `purpose: "attendance-time-in"` (or omit `purpose`), sign it, and post the
+   signature to `/api/biometric/verify`. For fingerprint Time Out, request a
+   new challenge with `purpose: "attendance-time-out"`. In either case, submit
+   the returned `biometric_verification_token` and the selected
+   `verification_method` with that action's multipart attendance request.
+   A single verified fingerprint credential can be selected for both Time In
+   and Time Out; separate credentials for each action are not required. The
    token expires after five minutes and is single-use.
 
 The signed message is the exact UTF-8 string returned as `message_to_sign`.
@@ -48,9 +56,9 @@ Independent face matching/liveness requires a trusted identity-verification
 provider or a vetted on-device attestation architecture.
 
 After login, check enrollment with `GET /api/biometric/credentials`. The
-`methods.fingerprint.enrolled` and `methods.face.enrolled` values reflect keys
-actually registered with the backend; they must not be inferred from local
-permissions or a screen visit. Registration is confirmed only by a successful
+`methods.fingerprint.enrolled` value reflects keys actually registered with
+the backend; use `/api/face/status` for face enrollment. Enrollment must not
+be inferred from local permissions or a screen visit. Registration is confirmed only by a successful
 `POST /api/biometric/credentials` response. To disable a method or remove one
 device, send `DELETE /api/biometric/credentials` with the employee password,
 `verification_method`, and optionally the matching `credential_id`. Password
@@ -74,10 +82,16 @@ must not cause the UI to show it as enrolled.
 Post `/api/attendance/time-in` as `multipart/form-data` with:
 
 - `photo`: JPEG or PNG, maximum 5 MB.
-- `biometric_verification_token`: one-use token from the verified challenge.
+- `verification_method`: the selected method (`fingerprint` or `face`).
+- `biometric_verification_token`: one-use fingerprint token from the verified
+  challenge, when `verification_method` is `fingerprint`.
+- `face_verification_token`: one-use token from `/api/face/verify`, when
+  `verification_method` is `face`.
 
 Do not send an employee ID. The employee is resolved from the authenticated
-JWT. Attendance photos are stored on Laravel's private `local` disk and are
+JWT. Send only the token for the selected method; the API rejects tokens for a
+different method. Use the same fields for `POST /api/attendance/time-out`.
+Attendance photos are stored on Laravel's private `local` disk and are
 not exposed as public files. The attendance response includes `photo_url`;
 fetch it with the same employee bearer token (the employee can access only
 their own photo; admins can access all photos). The timestamp in the
@@ -119,3 +133,47 @@ the request detail page shows the employee's reason, requested and current
 attendance values, then provides approve/apply and reject actions. Both API
 and web review use the same transactional correction service and retain the
 same audit data.
+
+## Face Recognition Biometric API
+
+Face biometrics can be enrolled, verified, checked, or revoked using dedicated API endpoints:
+
+1. **Check Status**: `GET /api/face/status`
+   Returns whether face biometrics are enrolled for the authenticated employee:
+   ```json
+   {
+     "enrolled": true,
+     "face": {
+       "verified_at": "2026-10-08T10:00:00+08:00",
+       "model_version": "dlib_face_recognition_v1"
+     }
+   }
+   ```
+
+2. **Enrollment**: `POST /api/face/enroll` (multipart/form-data)
+   - `face_image` (or `image` or `photo`): JPEG or PNG image containing exactly one face (64x64 to 6000x6000px).
+   - Generates and encrypts a 128-dimensional biometric embedding template on the server.
+   - Re-enrolling replaces any previously enrolled face template.
+
+3. **Verification**: `POST /api/face/verify` (multipart/form-data)
+   - `face_image` (or `image` or `photo`): Candidate selfie capture.
+   - Compares candidate embedding against the enrolled template using Euclidean distance with threshold (default 0.60).
+   - On match, returns a single-use `face_verification_token` valid for 2 minutes:
+     ```json
+     {
+       "verified": true,
+       "confidence": 0.96,
+       "message": "Face verification successful.",
+       "face_verification_token": "64-character-hex-token",
+       "expires_at": "2026-10-09T13:45:00+08:00"
+     }
+     ```
+
+4. **Revocation**: `DELETE /api/face/revoke` (application/json)
+   - `password`: Employee account password for re-authentication.
+   - Permanently deletes the enrolled face template.
+
+5. **Time In & Time Out Submission**:
+   - Include `face_verification_token` with `POST /api/attendance/time-in` or `/api/attendance/time-out`.
+   - The token is verified against the database and marked as consumed (`used_at`).
+   - If `FACE_RECOGNITION_REQUIRE_FOR_ATTENDANCE=true`, submission without a valid `face_verification_token` is rejected.

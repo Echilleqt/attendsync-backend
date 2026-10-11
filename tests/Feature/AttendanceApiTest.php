@@ -147,12 +147,12 @@ class AttendanceApiTest extends TestCase
         [$user] = $this->createEmployee();
         $this->actingAs($user, 'api');
 
-        $privateKey = openssl_pkey_new([
+        $privateKey = openssl_pkey_new($this->opensslConfig([
             'private_key_type' => OPENSSL_KEYTYPE_RSA,
             'private_key_bits' => 2048,
-        ]);
+        ]));
         $this->assertNotFalse($privateKey);
-        openssl_pkey_export($privateKey, $privateKeyPem);
+        openssl_pkey_export($privateKey, $privateKeyPem, null, $this->opensslConfig());
         $details = openssl_pkey_get_details($privateKey);
 
         $enrollment = $this->postJson('/api/biometric/credentials', [
@@ -215,6 +215,165 @@ class AttendanceApiTest extends TestCase
         $this->assertSame(64, strlen($verification->json('biometric_verification_token')));
     }
 
+    public function test_employee_can_time_out_with_one_registered_fingerprint_biometric(): void
+    {
+        Storage::fake('local');
+        [$user, $employee] = $this->createEmployee();
+        $privateKey = openssl_pkey_new($this->opensslConfig([
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+            'private_key_bits' => 2048,
+        ]));
+        $this->assertNotFalse($privateKey);
+        openssl_pkey_export($privateKey, $privateKeyPem, null, $this->opensslConfig());
+        $details = openssl_pkey_get_details($privateKey);
+        $credential = BiometricCredential::create([
+            'employee_id' => $employee->id,
+            'credential_id' => (string) \Illuminate\Support\Str::uuid(),
+            'verification_method' => 'fingerprint',
+            'public_key_pem' => $details['key'],
+            'device_name' => 'Test phone',
+            'verified_at' => now(),
+        ]);
+        $attendance = Attendance::create([
+            'employee_id' => $employee->id,
+            'attendance_date' => Carbon::today('Asia/Manila')->toDateString(),
+            'time_in' => Carbon::today('Asia/Manila')->setTime(8, 0),
+            'status' => 'present',
+        ]);
+        $this->actingAs($user, 'api');
+
+        $challenge = $this->postJson('/api/biometric/challenges', [
+            'verification_method' => 'fingerprint',
+            'credential_id' => $credential->credential_id,
+            'purpose' => 'attendance-time-out',
+        ])->assertOk();
+
+        openssl_sign(
+            $challenge->json('message_to_sign'),
+            $signature,
+            $privateKeyPem,
+            OPENSSL_ALGO_SHA256
+        );
+
+        $verification = $this->postJson('/api/biometric/verify', [
+            'challenge_id' => $challenge->json('challenge_id'),
+            'signature' => base64_encode($signature),
+        ])->assertOk();
+
+        $this->post('/api/attendance/time-out', [
+            'verification_method' => 'fingerprint',
+            'biometric_verification_token' => $verification->json('biometric_verification_token'),
+            'photo' => $this->validPngUpload('time-out.png'),
+        ], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('attendance.id', $attendance->id)
+            ->assertJsonPath('attendance.time_out_verification_method', 'fingerprint');
+    }
+
+    public function test_challenge_accepts_time_in_and_time_out_aliases_and_issues_valid_tokens(): void
+    {
+        [$user, $employee] = $this->createEmployee();
+        $privateKey = openssl_pkey_new($this->opensslConfig([
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+            'private_key_bits' => 2048,
+        ]));
+        openssl_pkey_export($privateKey, $privateKeyPem, null, $this->opensslConfig());
+        $details = openssl_pkey_get_details($privateKey);
+        $credential = BiometricCredential::create([
+            'employee_id' => $employee->id,
+            'credential_id' => (string) \Illuminate\Support\Str::uuid(),
+            'verification_method' => 'fingerprint',
+            'public_key_pem' => $details['key'],
+            'device_name' => 'Alias phone',
+            'verified_at' => now(),
+        ]);
+        $this->actingAs($user, 'api');
+
+        $timeInChallenge = $this->postJson('/api/biometric/challenges', [
+            'verification_method' => 'fingerprint',
+            'credential_id' => $credential->credential_id,
+            'purpose' => 'time-in',
+        ])->assertOk();
+
+        openssl_sign(
+            $timeInChallenge->json('message_to_sign'),
+            $timeInSignature,
+            $privateKeyPem,
+            OPENSSL_ALGO_SHA256
+        );
+
+        $timeInVerify = $this->postJson('/api/biometric/verify', [
+            'challenge_id' => $timeInChallenge->json('challenge_id'),
+            'signature' => base64_encode($timeInSignature),
+        ])->assertOk()
+            ->assertJsonPath('credential_verified', true);
+
+        $this->assertNotEmpty($timeInVerify->json('biometric_verification_token'));
+        $this->assertNotEmpty($timeInVerify->json('verification_token'));
+
+        $timeOutChallenge = $this->postJson('/api/biometric/challenges', [
+            'verification_method' => 'fingerprint',
+            'credential_id' => $credential->credential_id,
+            'purpose' => 'time-out',
+        ])->assertOk();
+
+        openssl_sign(
+            $timeOutChallenge->json('message_to_sign'),
+            $timeOutSignature,
+            $privateKeyPem,
+            OPENSSL_ALGO_SHA256
+        );
+
+        $timeOutVerify = $this->postJson('/api/biometric/verify', [
+            'challenge_id' => $timeOutChallenge->json('challenge_id'),
+            'signature' => base64_encode($timeOutSignature),
+        ])->assertOk()
+            ->assertJsonPath('credential_verified', true);
+
+        $this->assertNotEmpty($timeOutVerify->json('biometric_verification_token'));
+    }
+
+    public function test_attendance_rejects_forged_or_expired_biometric_verification_tokens(): void
+    {
+        [$user, $employee] = $this->createEmployee();
+        $this->actingAs($user, 'api');
+
+        // Forged 64-char hex token
+        $this->post('/api/attendance/time-in', [
+            'verification_method' => 'fingerprint',
+            'biometric_verification_token' => str_repeat('f', 64),
+            'photo' => $this->validPngUpload('proof.png'),
+        ], ['Accept' => 'application/json'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('biometric_verification_token');
+
+        // Expired token
+        $credential = BiometricCredential::create([
+            'employee_id' => $employee->id,
+            'credential_id' => (string) \Illuminate\Support\Str::uuid(),
+            'verification_method' => 'fingerprint',
+            'public_key_pem' => 'test-key',
+            'device_name' => 'Expired phone',
+            'verified_at' => now(),
+        ]);
+        $expiredToken = bin2hex(random_bytes(32));
+        BiometricVerification::create([
+            'employee_id' => $employee->id,
+            'biometric_credential_id' => $credential->id,
+            'verification_method' => 'fingerprint',
+            'token_hash' => hash('sha256', $expiredToken),
+            'expires_at' => now()->subMinute(),
+        ]);
+
+        $this->post('/api/attendance/time-in', [
+            'verification_method' => 'fingerprint',
+            'biometric_verification_token' => $expiredToken,
+            'photo' => $this->validPngUpload('proof.png'),
+        ], ['Accept' => 'application/json'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('biometric_verification_token');
+    }
+
     public function test_face_enrollment_is_rejected_without_a_verification_provider(): void
     {
         [$user] = $this->createEmployee();
@@ -236,10 +395,10 @@ class AttendanceApiTest extends TestCase
         [$firstUser] = $this->createEmployee();
         [$secondUser] = $this->createEmployee();
 
-        $privateKey = openssl_pkey_new([
+        $privateKey = openssl_pkey_new($this->opensslConfig([
             'private_key_type' => OPENSSL_KEYTYPE_EC,
             'curve_name' => 'prime256v1',
-        ]);
+        ]));
         $this->assertNotFalse($privateKey);
         $details = openssl_pkey_get_details($privateKey);
 
@@ -274,10 +433,10 @@ class AttendanceApiTest extends TestCase
         [$user] = $this->createEmployee();
         $this->actingAs($user, 'api');
 
-        $key = openssl_pkey_new([
+        $key = openssl_pkey_new($this->opensslConfig([
             'private_key_type' => OPENSSL_KEYTYPE_RSA,
             'private_key_bits' => 2048,
-        ]);
+        ]));
         $details = openssl_pkey_get_details($key);
 
         $this->getJson('/api/biometric/credentials')
@@ -626,9 +785,10 @@ class AttendanceApiTest extends TestCase
     {
         Carbon::setTestNow(Carbon::parse("2026-10-03 {$time}", 'Asia/Manila'));
         [$user, $employee] = $this->createEmployee();
-        AttendanceSetting::create([
-            'late_starting_time' => '08:00:00',
+        AttendanceSetting::firstOrCreate([
             'effective_date' => '2026-10-01',
+        ], [
+            'late_starting_time' => '08:00:00',
         ]);
 
         $this->actingAs($user, 'api')

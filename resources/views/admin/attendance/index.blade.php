@@ -137,6 +137,13 @@
                                     ? \Carbon\Carbon::parse($attendance->time_in)->format('h:i A')
                                     : '—' }}
 
+                                @if ($attendance->time_in_verification_method)
+                                    <br>
+                                    <small style="color: #64748b; font-size: 11px;">
+                                        {{ $attendance->time_in_verification_method === 'face' ? 'Face' : 'Fingerprint' }}
+                                    </small>
+                                @endif
+
                             </td>
 
 
@@ -145,6 +152,13 @@
                                 {{ $attendance->time_out
                                     ? \Carbon\Carbon::parse($attendance->time_out)->format('h:i A')
                                     : '—' }}
+
+                                @if ($attendance->time_out_verification_method)
+                                    <br>
+                                    <small style="color: #64748b; font-size: 11px;">
+                                        {{ $attendance->time_out_verification_method === 'face' ? 'Face' : 'Fingerprint' }}
+                                    </small>
+                                @endif
 
                             </td>
 

@@ -5,6 +5,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Employee extends Model
 {
@@ -45,6 +46,16 @@ class Employee extends Model
     public function biometricCredentials(): HasMany
     {
         return $this->hasMany(BiometricCredential::class);
+    }
+
+    public function faceBiometricCredential(): HasOne
+    {
+        return $this->hasOne(FaceBiometricCredential::class);
+    }
+
+    public function faceVerificationTokens(): HasMany
+    {
+        return $this->hasMany(FaceVerificationToken::class);
     }
 
     public function attendanceCorrectionRequests(): HasMany
