@@ -1,12 +1,16 @@
 <?php
 
 use App\Http\Controllers\AdminController;
+use App\Http\Controllers\AdminDeviceController;
 use App\Http\Controllers\Api\AttendanceController as ApiAttendanceController;
 use App\Http\Controllers\AdminAttendanceCorrectionController;
 use App\Http\Controllers\AttendanceController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\DtrController;
 use App\Http\Controllers\EmployeeController;
 use App\Http\Controllers\ReportController;
+use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
 
@@ -107,6 +111,11 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
         'deactivate',
     ])->name('admin.employees.deactivate');
 
+    Route::post('/admin/employees/{employee}/activate', [
+        EmployeeController::class,
+        'activate',
+    ])->name('admin.employees.activate');
+
 
     /*
     |--------------------------------------------------------------------------
@@ -183,6 +192,48 @@ Route::post('/admin/settings', [
     SettingsController::class,
     'store',
 ])->name('admin.settings.store');
+
+Route::post('/admin/settings/network', [
+    SettingsController::class,
+    'updateNetwork',
+])->name('admin.settings.network.update');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Approved Device Management (Step 4)
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/admin/devices', [AdminDeviceController::class, 'index'])->name('admin.devices.index');
+    Route::post('/admin/devices/{device}/approve', [AdminDeviceController::class, 'approve'])->name('admin.devices.approve');
+    Route::post('/admin/devices/{device}/revoke', [AdminDeviceController::class, 'revoke'])->name('admin.devices.revoke');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Department Management (Step 5)
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/admin/departments', [DepartmentController::class, 'index'])->name('admin.departments.index');
+    Route::post('/admin/departments', [DepartmentController::class, 'store'])->name('admin.departments.store');
+    Route::put('/admin/departments/{department}', [DepartmentController::class, 'update'])->name('admin.departments.update');
+    Route::delete('/admin/departments/{department}', [DepartmentController::class, 'destroy'])->name('admin.departments.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Schedule Management (Step 5)
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/admin/schedules', [ScheduleController::class, 'index'])->name('admin.schedules.index');
+    Route::post('/admin/schedules', [ScheduleController::class, 'store'])->name('admin.schedules.store');
+    Route::put('/admin/schedules/{schedule}', [ScheduleController::class, 'update'])->name('admin.schedules.update');
+    Route::delete('/admin/schedules/{schedule}', [ScheduleController::class, 'destroy'])->name('admin.schedules.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | CSC Form No. 48 / Daily Time Record (DTR) (Step 5)
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/admin/reports/dtr', [DtrController::class, 'index'])->name('admin.reports.dtr');
+    Route::get('/admin/reports/dtr/print', [DtrController::class, 'print'])->name('admin.reports.dtr.print');
 
 });
 

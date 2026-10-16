@@ -17,7 +17,16 @@ abstract class TestCase extends BaseTestCase
 
         parent::setUp();
 
+        \App\Models\NetworkRestrictionSetting::clearCurrentCache();
+
         $this->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class);
+    }
+
+    protected function tearDown(): void
+    {
+        \App\Models\NetworkRestrictionSetting::clearCurrentCache();
+
+        parent::tearDown();
     }
 
     protected function opensslConfig(array $options = []): array

@@ -93,8 +93,8 @@
                     <tr>
                         <th>Employee</th>
                         <th>Date</th>
-                        <th>Time In</th>
-                        <th>Time Out</th>
+                        <th>Morning (AM)</th>
+                        <th>Afternoon (PM)</th>
                         <th>Status</th>
                         <th>Photo Proof</th>
                     </tr>
@@ -132,34 +132,24 @@
 
 
                             <td>
-
-                                {{ $attendance->time_in
-                                    ? \Carbon\Carbon::parse($attendance->time_in)->format('h:i A')
-                                    : '—' }}
-
-                                @if ($attendance->time_in_verification_method)
-                                    <br>
+                                <div><strong>In:</strong> {{ $attendance->am_time_in ? \Carbon\Carbon::parse($attendance->am_time_in)->format('h:i A') : ($attendance->time_in ? \Carbon\Carbon::parse($attendance->time_in)->format('h:i A') : '—') }}</div>
+                                <div><strong>Out:</strong> {{ $attendance->am_time_out ? \Carbon\Carbon::parse($attendance->am_time_out)->format('h:i A') : '—' }}</div>
+                                @if ($attendance->am_time_in_verification_method || $attendance->time_in_verification_method)
                                     <small style="color: #64748b; font-size: 11px;">
-                                        {{ $attendance->time_in_verification_method === 'face' ? 'Face' : 'Fingerprint' }}
+                                        Method: {{ ($attendance->am_time_in_verification_method ?? $attendance->time_in_verification_method) === 'face' ? 'Face' : 'Fingerprint' }}
                                     </small>
                                 @endif
-
                             </td>
 
 
                             <td>
-
-                                {{ $attendance->time_out
-                                    ? \Carbon\Carbon::parse($attendance->time_out)->format('h:i A')
-                                    : '—' }}
-
-                                @if ($attendance->time_out_verification_method)
-                                    <br>
+                                <div><strong>In:</strong> {{ $attendance->pm_time_in ? \Carbon\Carbon::parse($attendance->pm_time_in)->format('h:i A') : '—' }}</div>
+                                <div><strong>Out:</strong> {{ $attendance->pm_time_out ? \Carbon\Carbon::parse($attendance->pm_time_out)->format('h:i A') : ($attendance->time_out ? \Carbon\Carbon::parse($attendance->time_out)->format('h:i A') : '—') }}</div>
+                                @if ($attendance->pm_time_out_verification_method || $attendance->time_out_verification_method)
                                     <small style="color: #64748b; font-size: 11px;">
-                                        {{ $attendance->time_out_verification_method === 'face' ? 'Face' : 'Fingerprint' }}
+                                        Method: {{ ($attendance->pm_time_out_verification_method ?? $attendance->time_out_verification_method) === 'face' ? 'Face' : 'Fingerprint' }}
                                     </small>
                                 @endif
-
                             </td>
 
 

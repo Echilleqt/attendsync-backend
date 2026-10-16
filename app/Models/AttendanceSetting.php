@@ -23,6 +23,13 @@ class AttendanceSetting extends Model
         ];
     }
 
+    public function setEffectiveDateAttribute($value): void
+    {
+        $this->attributes['effective_date'] = $value instanceof \DateTimeInterface
+            ? $value->format('Y-m-d')
+            : substr((string) $value, 0, 10);
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

@@ -37,6 +37,15 @@ class AuthController extends Controller
 
         $employee = $user->employee;
 
+        if ($user->role === 'employee' && $employee && $employee->status !== 'active') {
+            Auth::guard('api')->logout();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'This employee account is inactive. Please contact the administrator.',
+            ], 403);
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Login successful.',

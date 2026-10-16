@@ -15,17 +15,34 @@ class Attendance extends Model
         'attendance_date',
         'time_in',
         'time_out',
+        'am_time_in',
+        'am_time_out',
+        'pm_time_in',
+        'pm_time_out',
         'status',
         'photo_path',
         'time_out_photo_path',
+        'am_time_in_photo_path',
+        'am_time_out_photo_path',
+        'pm_time_in_photo_path',
+        'pm_time_out_photo_path',
         'late_starting_time_snapshot',
         'time_in_verification_method',
         'time_out_verification_method',
+        'am_time_in_verification_method',
+        'am_time_out_verification_method',
+        'pm_time_in_verification_method',
+        'pm_time_out_verification_method',
+        'undertime_minutes',
     ];
 
     protected $hidden = [
         'photo_path',
         'time_out_photo_path',
+        'am_time_in_photo_path',
+        'am_time_out_photo_path',
+        'pm_time_in_photo_path',
+        'pm_time_out_photo_path',
     ];
 
     protected function casts(): array
@@ -34,8 +51,50 @@ class Attendance extends Model
             'attendance_date' => 'date',
             'time_in' => 'datetime',
             'time_out' => 'datetime',
+            'am_time_in' => 'datetime',
+            'am_time_out' => 'datetime',
+            'pm_time_in' => 'datetime',
+            'pm_time_out' => 'datetime',
+            'undertime_minutes' => 'integer',
             'late_starting_time_snapshot' => 'string',
         ];
+    }
+
+    public function setAttendanceDateAttribute($value): void
+    {
+        $this->attributes['attendance_date'] = $value instanceof \DateTimeInterface
+            ? $value->format('Y-m-d')
+            : substr((string) $value, 0, 10);
+    }
+
+    public function setAmTimeInAttribute($value): void
+    {
+        $this->attributes['am_time_in'] = $value;
+        if (empty($this->attributes['time_in'])) {
+            $this->attributes['time_in'] = $value;
+        }
+    }
+
+    public function setPmTimeOutAttribute($value): void
+    {
+        $this->attributes['pm_time_out'] = $value;
+        $this->attributes['time_out'] = $value;
+    }
+
+    public function setTimeInAttribute($value): void
+    {
+        $this->attributes['time_in'] = $value;
+        if (empty($this->attributes['am_time_in'])) {
+            $this->attributes['am_time_in'] = $value;
+        }
+    }
+
+    public function setTimeOutAttribute($value): void
+    {
+        $this->attributes['time_out'] = $value;
+        if (empty($this->attributes['pm_time_out'])) {
+            $this->attributes['pm_time_out'] = $value;
+        }
     }
 
     public function employee(): BelongsTo

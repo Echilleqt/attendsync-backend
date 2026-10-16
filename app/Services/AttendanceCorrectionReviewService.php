@@ -30,6 +30,12 @@ class AttendanceCorrectionReviewService
                 ]);
             }
 
+            if ($reviewer->employee && (int) $reviewer->employee->id === (int) $correction->employee_id) {
+                throw ValidationException::withMessages([
+                    'reviewer' => 'Administrators are not permitted to review or approve their own attendance correction requests.',
+                ]);
+            }
+
             if ($approve) {
                 $this->applyCorrection($correction);
             }

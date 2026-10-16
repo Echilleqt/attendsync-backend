@@ -169,9 +169,25 @@
                             <span class="recent-employee-name">{{ $attendance->employee?->full_name ?? 'Employee unavailable' }}</span>
                             <small>{{ $attendance->employee?->employee_id ?? '—' }}</small>
                         </td>
-                        <td>{{ $attendance->attendance_date?->format('M j, Y') ?? '—' }}</td>
-                        <td>{{ $attendance->time_in?->timezone(config('app.timezone'))->format('g:i A') ?? '—' }}</td>
-                        <td>{{ $attendance->time_out?->timezone(config('app.timezone'))->format('g:i A') ?? '—' }}</td>
+                        <td>
+                            @if ($attendance->attendance_date)
+                                <time datetime="{{ $attendance->attendance_date->format('Y-m-d') }}">{{ $attendance->attendance_date->format('M j, Y') }}</time>
+                            @else
+                                —
+                            @endif
+                        </td>
+                        <td>
+                            {{ $attendance->am_time_in?->timezone(config('app.timezone'))->format('g:i A') ?? ($attendance->time_in?->timezone(config('app.timezone'))->format('g:i A') ?? '—') }}
+                            @if ($attendance->am_time_out)
+                                <small style="color:#6b7280; display:block;">AM Out: {{ $attendance->am_time_out->timezone(config('app.timezone'))->format('g:i A') }}</small>
+                            @endif
+                        </td>
+                        <td>
+                            @if ($attendance->pm_time_in)
+                                <small style="color:#6b7280; display:block;">PM In: {{ $attendance->pm_time_in->timezone(config('app.timezone'))->format('g:i A') }}</small>
+                            @endif
+                            {{ $attendance->pm_time_out?->timezone(config('app.timezone'))->format('g:i A') ?? ($attendance->time_out?->timezone(config('app.timezone'))->format('g:i A') ?? '—') }}
+                        </td>
                         <td>
                             @php
                                 $statusClass = match ($attendance->status) {

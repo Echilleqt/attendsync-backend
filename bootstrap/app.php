@@ -17,6 +17,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
     $middleware->alias([
         'role' => \App\Http\Middleware\RoleMiddleware::class,
+        'network.restriction' => \App\Http\Middleware\EnsureNetworkRestriction::class,
     ]);
 })
     ->withExceptions(function (Exceptions $exceptions): void {

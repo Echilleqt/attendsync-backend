@@ -294,6 +294,34 @@ class EmployeeController extends Controller
     }
 
     /**
+     * Activate an inactive employee.
+     */
+    public function activate(string $employee)
+    {
+        $employeeRecord = Employee::findOrFail($employee);
+
+        if ($employeeRecord->status === 'active') {
+            return redirect()
+                ->route('admin.employees.index')
+                ->with(
+                    'error',
+                    'This employee is already active.'
+                );
+        }
+
+        $employeeRecord->update([
+            'status' => 'active',
+        ]);
+
+        return redirect()
+            ->route('admin.employees.index')
+            ->with(
+                'success',
+                'Employee activated successfully.'
+            );
+    }
+
+    /**
      * Permanently delete an employee and user account.
      */
     public function destroy(string $employee)

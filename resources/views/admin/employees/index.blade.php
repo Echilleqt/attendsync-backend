@@ -201,6 +201,24 @@
 
                                         </form>
 
+                                    @else
+
+                                        <form
+                                            method="POST"
+                                            action="{{ route('admin.employees.activate', $employee->id) }}"
+                                        >
+                                            @csrf
+
+                                            <button
+                                                type="submit"
+                                                class="table-action edit-action"
+                                                onclick="return confirm('Reactivate this employee account?')"
+                                            >
+                                                Activate
+                                            </button>
+
+                                        </form>
+
                                     @endif
 
                                 </div>

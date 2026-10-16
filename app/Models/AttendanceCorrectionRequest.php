@@ -32,6 +32,13 @@ class AttendanceCorrectionRequest extends Model
         ];
     }
 
+    public function setAttendanceDateAttribute($value): void
+    {
+        $this->attributes['attendance_date'] = $value instanceof \DateTimeInterface
+            ? $value->format('Y-m-d')
+            : substr((string) $value, 0, 10);
+    }
+
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class);

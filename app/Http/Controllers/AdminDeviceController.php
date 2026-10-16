@@ -1,0 +1,57 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\ApprovedDevice;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class AdminDeviceController extends Controller
+{
+    public function index(Request $request)
+    {
+        $status = $request->query('status');
+
+        $query = ApprovedDevice::with(['employee.user', 'approver'])
+            ->latest('registered_at');
+
+        if ($status && in_array($status, ['pending', 'approved', 'revoked'], true)) {
+            $query->where('status', $status);
+        }
+
+        $devices = $query->paginate(20)->withQueryString();
+
+        $stats = [
+            'total' => ApprovedDevice::count(),
+            'pending' => ApprovedDevice::where('status', 'pending')->count(),
+            'approved' => ApprovedDevice::where('status', 'approved')->count(),
+            'revoked' => ApprovedDevice::where('status', 'revoked')->count(),
+        ];
+
+        return view('admin.devices.index', compact('devices', 'stats', 'status'));
+    }
+
+    public function approve(ApprovedDevice $device)
+    {
+        $device->update([
+            'status' => 'approved',
+            'approved_by' => Auth::id(),
+            'approved_at' => now('Asia/Manila'),
+            'rejection_reason' => null,
+        ]);
+
+        return redirect()->back()->with('success', "Device {$device->device_model} ({$device->device_uuid}) approved successfully.");
+    }
+
+    public function revoke(Request $request, ApprovedDevice $device)
+    {
+        $reason = $request->input('reason', 'Revoked by administrator');
+
+        $device->update([
+            'status' => 'revoked',
+            'rejection_reason' => $reason,
+        ]);
+
+        return redirect()->back()->with('success', "Device {$device->device_model} ({$device->device_uuid}) has been revoked.");
+    }
+}
