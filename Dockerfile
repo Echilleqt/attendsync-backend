@@ -1,4 +1,4 @@
-FROM php:8.2-cli
+FROM php:8.2-cli-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git unzip zip curl \
@@ -14,6 +14,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV FACE_RECOGNITION_PYTHON_BINARY=/opt/venv/bin/python
+ENV CMAKE_BUILD_PARALLEL_LEVEL=1
 
 RUN python3 -m venv /opt/venv
 
@@ -21,7 +22,7 @@ WORKDIR /var/www/html
 
 # Layer-cache Python dependencies (avoids recompiling dlib on every app change)
 COPY requirements.txt .
-RUN python -m pip install --no-cache-dir --upgrade pip \
+RUN python -m pip install --no-cache-dir --upgrade pip wheel \
     && python -m pip install --no-cache-dir -r requirements.txt
 
 # Layer-cache Composer dependencies
