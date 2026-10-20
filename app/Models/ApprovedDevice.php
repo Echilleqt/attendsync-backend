@@ -17,6 +17,7 @@ class ApprovedDevice extends Model
         'device_name',
         'device_model',
         'device_os',
+        'public_key',
         'status',
         'verified_via_face',
         'registered_at',
@@ -52,5 +53,15 @@ class ApprovedDevice extends Model
     public function isPending(): bool
     {
         return $this->status === 'pending';
+    }
+
+    public function isRejected(): bool
+    {
+        return $this->status === 'rejected';
+    }
+
+    public function isRevoked(): bool
+    {
+        return $this->status === 'revoked';
     }
 }

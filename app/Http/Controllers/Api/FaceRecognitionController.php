@@ -32,9 +32,10 @@ class FaceRecognitionController extends Controller
         }
 
         $credential = $employee->faceBiometricCredential()->first();
+        $isEnrolled = (bool) ($credential && !empty($credential->face_template));
 
         return response()->json([
-            'enrolled' => (bool) $credential,
+            'enrolled' => $isEnrolled,
             'face' => $credential ? [
                 'verified_at' => $credential->verified_at?->toIso8601String(),
                 'model_version' => $credential->model_version,
@@ -52,6 +53,15 @@ class FaceRecognitionController extends Controller
                 'success' => false,
                 'message' => 'An active employee profile is required.',
             ], 403);
+        }
+
+        // Prevent existing face template from being overwritten during device registration
+        $existing = $employee->faceBiometricCredential()->first();
+        if ($existing && !empty($existing->face_template)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Face biometric template is already enrolled for this employee. Existing employees registering a new device must verify using face verification.',
+            ], 409);
         }
 
         $file = $request->file('face_image')
@@ -86,8 +96,23 @@ class FaceRecognitionController extends Controller
             ]
         );
 
+        // Issue a single-use token bound to this device for device registration
+        $deviceUuid = $request->input('device_uuid') ?? $request->header('X-Device-Id');
+        $token = Str::random(64);
+        $expiresAt = now()->addMinutes((int) config('face-recognition.verification_ttl_minutes', 5));
+
+        FaceVerificationToken::query()->create([
+            'employee_id' => $employee->id,
+            'device_uuid' => $deviceUuid,
+            'token_hash' => hash('sha256', $token),
+            'expires_at' => $expiresAt,
+        ]);
+
         return response()->json([
+            'success' => true,
             'message' => 'Face recognition enrolled successfully.',
+            'face_verification_token' => $token,
+            'expires_at' => $expiresAt->toIso8601String(),
             'face' => [
                 'enrolled' => true,
                 'verified_at' => $credential->verified_at?->toIso8601String(),
@@ -147,8 +172,11 @@ class FaceRecognitionController extends Controller
             $token = Str::random(64);
             $expiresAt = now()->addMinutes((int) config('face-recognition.verification_ttl_minutes', 2));
 
+            $deviceUuid = $request->input('device_uuid') ?? $request->header('X-Device-Id');
+
             FaceVerificationToken::query()->create([
                 'employee_id' => $employee->id,
+                'device_uuid' => $deviceUuid,
                 'token_hash' => hash('sha256', $token),
                 'expires_at' => $expiresAt,
             ]);

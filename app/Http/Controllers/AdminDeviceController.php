@@ -15,7 +15,7 @@ class AdminDeviceController extends Controller
         $query = ApprovedDevice::with(['employee.user', 'approver'])
             ->latest('registered_at');
 
-        if ($status && in_array($status, ['pending', 'approved', 'revoked'], true)) {
+        if ($status && in_array($status, ['pending', 'approved', 'rejected', 'revoked'], true)) {
             $query->where('status', $status);
         }
 
@@ -25,6 +25,7 @@ class AdminDeviceController extends Controller
             'total' => ApprovedDevice::count(),
             'pending' => ApprovedDevice::where('status', 'pending')->count(),
             'approved' => ApprovedDevice::where('status', 'approved')->count(),
+            'rejected' => ApprovedDevice::where('status', 'rejected')->count(),
             'revoked' => ApprovedDevice::where('status', 'revoked')->count(),
         ];
 
@@ -41,6 +42,22 @@ class AdminDeviceController extends Controller
         ]);
 
         return redirect()->back()->with('success', "Device {$device->device_model} ({$device->device_uuid}) approved successfully.");
+    }
+
+    public function reject(Request $request, ApprovedDevice $device)
+    {
+        $validated = $request->validate([
+            'rejection_reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $device->update([
+            'status' => 'rejected',
+            'approved_by' => Auth::id(),
+            'approved_at' => now('Asia/Manila'),
+            'rejection_reason' => $validated['rejection_reason'] ?? 'Registration rejected by administrator',
+        ]);
+
+        return redirect()->back()->with('success', "Device {$device->device_model} ({$device->device_uuid}) has been rejected.");
     }
 
     public function revoke(Request $request, ApprovedDevice $device)

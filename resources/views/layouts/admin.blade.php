@@ -32,6 +32,8 @@
 
     </div>
 
+    @include('components.admin.custom-modal')
+
     <script src="{{ asset('js/admin.js') }}" defer></script>
 </body>
 </html>

@@ -38,4 +38,14 @@ class Schedule extends Model
     {
         return $this->hasMany(Employee::class);
     }
+
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(EmployeeSchedule::class);
+    }
+
+    public function attendances(): HasMany
+    {
+        return $this->hasMany(Attendance::class);
+    }
 }

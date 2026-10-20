@@ -17,14 +17,14 @@
 
     <style>
         :root {
-            --navy: #111c36;
-            --navy-light: #1c2b4b;
-            --primary-blue: #315bff;
-            --primary-blue-dark: #2448d8;
-            --page-bg: #f4f7fb;
-            --text-dark: #12213d;
-            --text-muted: #7c8aa3;
-            --border: #e4eaf3;
+            --navy: #14264F;
+            --navy-light: #1b356d;
+            --primary-blue: #2457D6;
+            --primary-blue-dark: #1b44ab;
+            --page-bg: #F3F6FB;
+            --text-dark: #0F172A;
+            --text-muted: #64748B;
+            --border: #E2E8F0;
             --white: #ffffff;
         }
 
@@ -566,18 +566,18 @@
                 <div class="brand-features">
 
                     <div class="feature-item">
-                        <span class="feature-check">✓</span>
-                        Secure access
+                        <x-lucide-circle-check class="w-4 h-4 text-emerald-400" aria-hidden="true" />
+                        <span>Secure access</span>
                     </div>
 
                     <div class="feature-item">
-                        <span class="feature-check">✓</span>
-                        Real-time records
+                        <x-lucide-circle-check class="w-4 h-4 text-emerald-400" aria-hidden="true" />
+                        <span>Real-time records</span>
                     </div>
 
                     <div class="feature-item">
-                        <span class="feature-check">✓</span>
-                        Easy monitoring
+                        <x-lucide-circle-check class="w-4 h-4 text-emerald-400" aria-hidden="true" />
+                        <span>Easy monitoring</span>
                     </div>
 
                 </div>
@@ -636,7 +636,9 @@
 
                         <div class="input-wrapper">
 
-                            <span class="input-icon">✉</span>
+                            <span class="input-icon">
+                                <x-lucide-mail class="w-4 h-4 text-slate-400" aria-hidden="true" />
+                            </span>
 
                             <input
                                 type="email"
@@ -661,7 +663,9 @@
 
                         <div class="input-wrapper">
 
-                            <span class="input-icon">🔒</span>
+                            <span class="input-icon">
+                                <x-lucide-lock class="w-4 h-4 text-slate-400" aria-hidden="true" />
+                            </span>
 
                             <input
                                 type="password"
@@ -678,7 +682,8 @@
                                 onclick="togglePassword()"
                                 aria-label="Show or hide password"
                             >
-                                👁
+                                <span id="pwdEyeShow"><x-lucide-eye class="w-4 h-4" aria-hidden="true" /></span>
+                                <span id="pwdEyeHide" style="display:none;"><x-lucide-eye-off class="w-4 h-4" aria-hidden="true" /></span>
                             </button>
 
                         </div>
@@ -705,7 +710,8 @@
                 </form>
 
                 <div class="security-note">
-                    🔐 Your account information is protected
+                    <x-lucide-shield-check class="w-4 h-4 text-blue-600 inline-block align-middle mr-1" aria-hidden="true" />
+                    <span>Your account information is protected</span>
                 </div>
 
                 <div class="form-bottom">
@@ -722,14 +728,17 @@
     <script>
         function togglePassword() {
             const passwordInput = document.getElementById('password');
-            const toggleButton = document.querySelector('.password-toggle');
+            const showIcon = document.getElementById('pwdEyeShow');
+            const hideIcon = document.getElementById('pwdEyeHide');
 
             if (passwordInput.type === 'password') {
                 passwordInput.type = 'text';
-                toggleButton.textContent = '🙈';
+                showIcon.style.display = 'none';
+                hideIcon.style.display = 'inline-flex';
             } else {
                 passwordInput.type = 'password';
-                toggleButton.textContent = '👁';
+                showIcon.style.display = 'inline-flex';
+                hideIcon.style.display = 'none';
             }
         }
     </script>

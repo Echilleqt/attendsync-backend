@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\BiometricVerificationController;
 use App\Http\Controllers\Api\DeviceRegistrationController;
 use App\Http\Controllers\Api\FaceRecognitionController;
 use App\Http\Controllers\Api\NetworkPolicyController;
+use App\Http\Controllers\EmployeeController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
@@ -29,96 +30,120 @@ Route::middleware(['auth:api', 'network.restriction'])->group(function () {
     Route::post('/devices/register', [DeviceRegistrationController::class, 'register']);
     Route::get('/devices/status', [DeviceRegistrationController::class, 'status']);
 
-    // Attendance Actions
-    Route::post('/attendance/time-in', [
-        AttendanceController::class,
-        'timeIn',
-    ]);
+    // Protected employee endpoints requiring an approved registered device
+    Route::middleware('device.approved')->group(function () {
+        // Attendance Actions
+        Route::post('/attendance/time-in', [
+            AttendanceController::class,
+            'timeIn',
+        ]);
 
-    Route::post('/attendance/time-out', [
-        AttendanceController::class,
-        'timeOut',
-    ]);
+        Route::post('/attendance/time-out', [
+            AttendanceController::class,
+            'timeOut',
+        ]);
 
-    Route::post('/attendance/record', [
-        AttendanceController::class,
-        'record',
-    ]);
+        Route::post('/attendance/record', [
+            AttendanceController::class,
+            'record',
+        ]);
 
-    Route::post('/attendance/morning-in', [
-        AttendanceController::class,
-        'morningIn',
-    ]);
+        Route::post('/attendance/morning-in', [
+            AttendanceController::class,
+            'morningIn',
+        ]);
 
-    Route::post('/attendance/morning-out', [
-        AttendanceController::class,
-        'morningOut',
-    ]);
+        Route::post('/attendance/morning-out', [
+            AttendanceController::class,
+            'morningOut',
+        ]);
 
-    Route::post('/attendance/afternoon-in', [
-        AttendanceController::class,
-        'afternoonIn',
-    ]);
+        Route::post('/attendance/afternoon-in', [
+            AttendanceController::class,
+            'afternoonIn',
+        ]);
 
-    Route::post('/attendance/afternoon-out', [
-        AttendanceController::class,
-        'afternoonOut',
-    ]);
+        Route::post('/attendance/afternoon-out', [
+            AttendanceController::class,
+            'afternoonOut',
+        ]);
 
-    Route::get('/attendance/{attendance}/photo', [
-        AttendanceController::class,
-        'photo',
-    ])->name('api.attendance.photo');
+        Route::get('/attendance/{attendance}/photo', [
+            AttendanceController::class,
+            'photo',
+        ])->name('api.attendance.photo');
 
-    Route::get('/attendance/{attendance}/time-out-photo', [
-        AttendanceController::class,
-        'timeOutPhoto',
-    ])->name('api.attendance.time-out-photo');
+        Route::get('/attendance/{attendance}/time-out-photo', [
+            AttendanceController::class,
+            'timeOutPhoto',
+        ])->name('api.attendance.time-out-photo');
 
-    Route::get('/attendance/{attendance}/photo/{entry}', [
-        AttendanceController::class,
-        'entryPhoto',
-    ])->name('api.attendance.entry-photo');
+        Route::get('/attendance/{attendance}/photo/{entry}', [
+            AttendanceController::class,
+            'entryPhoto',
+        ])->name('api.attendance.entry-photo');
 
-    Route::get('/attendance/today', [
-        AttendanceController::class,
-        'today',
-    ]);
+        Route::get('/attendance/today', [
+            AttendanceController::class,
+            'today',
+        ]);
 
-    Route::get('/attendance/history', [
-        AttendanceController::class,
-        'history',
-    ]);
+        Route::get('/attendance/history', [
+            AttendanceController::class,
+            'history',
+        ]);
 
-    Route::get('/attendance/dtr', [
-        AttendanceController::class,
-        'dtr',
-    ]);
+        Route::get('/attendance/dtr', [
+            AttendanceController::class,
+            'dtr',
+        ]);
 
-    Route::post('/biometric/credentials', [
-        BiometricVerificationController::class,
-        'enroll',
-    ]);
+        Route::post('/biometric/credentials', [
+            BiometricVerificationController::class,
+            'enroll',
+        ]);
 
+        Route::delete('/biometric/credentials', [
+            BiometricVerificationController::class,
+            'revoke',
+        ]);
+
+        Route::post('/biometric/challenges', [
+            BiometricVerificationController::class,
+            'challenge',
+        ])->middleware('throttle:10,1');
+
+        Route::post('/biometric/verify', [
+            BiometricVerificationController::class,
+            'verify',
+        ])->middleware('throttle:10,1');
+
+        Route::delete('/face/revoke', [
+            FaceRecognitionController::class,
+            'revoke',
+        ]);
+
+        Route::get('/attendance-correction-requests', [
+            AttendanceCorrectionController::class,
+            'indexMine',
+        ]);
+
+        Route::post('/attendance-correction-requests', [
+            AttendanceCorrectionController::class,
+            'store',
+        ]);
+
+        Route::get('/attendance-correction-requests/{correctionRequest}', [
+            AttendanceCorrectionController::class,
+            'showMine',
+        ]);
+    });
+
+    // Device and account management allowed while pending/unregistered
     Route::get('/biometric/credentials', [
         BiometricVerificationController::class,
         'status',
     ]);
-
-    Route::delete('/biometric/credentials', [
-        BiometricVerificationController::class,
-        'revoke',
-    ]);
-
-    Route::post('/biometric/challenges', [
-        BiometricVerificationController::class,
-        'challenge',
-    ])->middleware('throttle:10,1');
-
-    Route::post('/biometric/verify', [
-        BiometricVerificationController::class,
-        'verify',
-    ])->middleware('throttle:10,1');
 
     Route::get('/face/status', [
         FaceRecognitionController::class,
@@ -134,26 +159,6 @@ Route::middleware(['auth:api', 'network.restriction'])->group(function () {
         FaceRecognitionController::class,
         'verify',
     ])->middleware('throttle:10,1');
-
-    Route::delete('/face/revoke', [
-        FaceRecognitionController::class,
-        'revoke',
-    ]);
-
-    Route::get('/attendance-correction-requests', [
-        AttendanceCorrectionController::class,
-        'indexMine',
-    ]);
-
-    Route::post('/attendance-correction-requests', [
-        AttendanceCorrectionController::class,
-        'store',
-    ]);
-
-    Route::get('/attendance-correction-requests/{correctionRequest}', [
-        AttendanceCorrectionController::class,
-        'showMine',
-    ]);
 
     Route::prefix('admin')->middleware('role:admin')->group(function () {
         Route::get('/attendance-correction-requests', [

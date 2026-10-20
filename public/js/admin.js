@@ -33,6 +33,14 @@
         toggle.setAttribute('aria-label', collapsed ? 'Expand navigation menu' : 'Collapse navigation menu');
     });
 
+    const closeBtn = document.querySelector('[data-sidebar-close]');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+            setMobileOpen(false);
+            toggle.focus();
+        });
+    }
+
     overlay.addEventListener('click', () => setMobileOpen(false));
     sidebar.querySelectorAll('a').forEach((link) => {
         link.addEventListener('click', () => {
@@ -43,10 +51,26 @@
     });
 
     document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && document.body.classList.contains('sidebar-open')) {
-            setMobileOpen(false);
-            toggle.focus();
+        if (event.key === 'Escape') {
+            if (document.body.classList.contains('sidebar-open')) {
+                setMobileOpen(false);
+                toggle.focus();
+            }
+            document.querySelectorAll('.custom-modal-backdrop').forEach((modal) => {
+                if (modal.style.display !== 'none') {
+                    modal.style.display = 'none';
+                }
+            });
         }
+    });
+
+    // Universal backdrop click to close custom modals
+    document.querySelectorAll('.custom-modal-backdrop').forEach((modal) => {
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        });
     });
 
     mobileQuery.addEventListener('change', (event) => {

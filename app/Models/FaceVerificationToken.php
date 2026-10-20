@@ -9,6 +9,7 @@ class FaceVerificationToken extends Model
 {
     protected $fillable = [
         'employee_id',
+        'device_uuid',
         'token_hash',
         'expires_at',
         'used_at',

@@ -19,6 +19,7 @@ class Employee extends Model
         'middle_name',
         'last_name',
         'position',
+        'position_id',
         'department',
         'department_id',
         'schedule_id',
@@ -43,9 +44,33 @@ class Employee extends Model
         return $this->belongsTo(Department::class, 'department_id');
     }
 
+    public function positionModel(): BelongsTo
+    {
+        return $this->belongsTo(Position::class, 'position_id');
+    }
+
     public function schedule(): BelongsTo
     {
         return $this->belongsTo(Schedule::class);
+    }
+
+    public function scheduleAssignments(): HasMany
+    {
+        return $this->hasMany(EmployeeSchedule::class)->orderByDesc('effective_date');
+    }
+
+    public function resolveScheduleForDate($date): ?Schedule
+    {
+        $targetDate = $date instanceof \DateTimeInterface ? $date->format('Y-m-d') : substr((string) $date, 0, 10);
+        $assignment = $this->scheduleAssignments()
+            ->where('effective_date', '<=', $targetDate)
+            ->where(function ($q) use ($targetDate) {
+                $q->whereNull('end_date')->orWhere('end_date', '>=', $targetDate);
+            })
+            ->orderByDesc('effective_date')
+            ->first();
+
+        return $assignment?->schedule ?? $this->schedule;
     }
 
     public function approvedDevices(): HasMany

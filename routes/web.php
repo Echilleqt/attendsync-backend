@@ -9,6 +9,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DepartmentController;
 use App\Http\Controllers\DtrController;
 use App\Http\Controllers\EmployeeController;
+use App\Http\Controllers\PositionController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\ScheduleController;
 use App\Http\Controllers\SettingsController;
@@ -140,8 +141,8 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
         'index',
     ])->name('admin.attendance.index');
 
-    Route::get('/admin/attendance/{attendance}/photo', [
-        ApiAttendanceController::class,
+    Route::get('/admin/attendance/{attendance}/photo/{entry?}', [
+        AttendanceController::class,
         'photo',
     ])->name('admin.attendance.photo');
 
@@ -205,6 +206,7 @@ Route::post('/admin/settings/network', [
     */
     Route::get('/admin/devices', [AdminDeviceController::class, 'index'])->name('admin.devices.index');
     Route::post('/admin/devices/{device}/approve', [AdminDeviceController::class, 'approve'])->name('admin.devices.approve');
+    Route::post('/admin/devices/{device}/reject', [AdminDeviceController::class, 'reject'])->name('admin.devices.reject');
     Route::post('/admin/devices/{device}/revoke', [AdminDeviceController::class, 'revoke'])->name('admin.devices.revoke');
 
     /*
@@ -219,13 +221,29 @@ Route::post('/admin/settings/network', [
 
     /*
     |--------------------------------------------------------------------------
-    | Schedule Management (Step 5)
+    | Position Management
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/admin/positions', [PositionController::class, 'index'])->name('admin.positions.index');
+    Route::post('/admin/positions', [PositionController::class, 'store'])->name('admin.positions.store');
+    Route::put('/admin/positions/{position}', [PositionController::class, 'update'])->name('admin.positions.update');
+    Route::delete('/admin/positions/{position}', [PositionController::class, 'destroy'])->name('admin.positions.destroy');
+    Route::get('/admin/positions/by-department/{department}', [PositionController::class, 'byDepartment'])->name('admin.positions.by-department');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Schedule Management & Individual Assignment (Step 5)
     |--------------------------------------------------------------------------
     */
     Route::get('/admin/schedules', [ScheduleController::class, 'index'])->name('admin.schedules.index');
+    Route::get('/admin/schedules/{schedule}', [ScheduleController::class, 'show'])->name('admin.schedules.show');
     Route::post('/admin/schedules', [ScheduleController::class, 'store'])->name('admin.schedules.store');
     Route::put('/admin/schedules/{schedule}', [ScheduleController::class, 'update'])->name('admin.schedules.update');
     Route::delete('/admin/schedules/{schedule}', [ScheduleController::class, 'destroy'])->name('admin.schedules.destroy');
+    Route::post('/admin/schedules/assign-employee', [ScheduleController::class, 'assignToEmployee'])->name('admin.schedules.assign-employee');
+    Route::post('/admin/schedules/custom-for-employee/{employee}', [ScheduleController::class, 'createCustomForEmployee'])->name('admin.schedules.custom-for-employee');
+    Route::get('/admin/employees/{employee}/schedules/history', [ScheduleController::class, 'employeeScheduleHistory'])->name('admin.schedules.employee-history');
+    Route::post('/admin/schedules/assignments/{assignment}/deactivate', [ScheduleController::class, 'deactivateAssignment'])->name('admin.schedules.deactivate-assignment');
 
     /*
     |--------------------------------------------------------------------------

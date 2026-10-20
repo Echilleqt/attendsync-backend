@@ -32,47 +32,59 @@ class DeviceRegistrationController extends Controller
             'device_name' => ['nullable', 'string', 'max:191'],
             'device_model' => ['nullable', 'string', 'max:191'],
             'device_os' => ['nullable', 'string', 'max:191'],
+            'public_key' => ['nullable', 'string', 'max:2048'],
             'face_verification_token' => ['required', 'string', 'size:64'],
         ]);
 
-        // Verify the single-use face verification token against the employee's existing face template
-        $tokenRecord = FaceVerificationToken::query()
-            ->where('token_hash', hash('sha256', $validated['face_verification_token']))
-            ->where('employee_id', $employee->id)
-            ->whereNull('used_at')
-            ->where('expires_at', '>', now())
-            ->first();
+        $device = \Illuminate\Support\Facades\DB::transaction(function () use ($validated, $employee) {
+            // Verify and atomically lock the single-use face verification token
+            $tokenRecord = FaceVerificationToken::query()
+                ->where('token_hash', hash('sha256', $validated['face_verification_token']))
+                ->where('employee_id', $employee->id)
+                ->whereNull('used_at')
+                ->where('expires_at', '>', now())
+                ->lockForUpdate()
+                ->first();
 
-        if (!$tokenRecord) {
-            throw ValidationException::withMessages([
-                'face_verification_token' => 'Face verification is invalid, expired, or already used. Please verify face again to register this device.',
+            if (!$tokenRecord) {
+                throw ValidationException::withMessages([
+                    'face_verification_token' => 'Face verification is invalid, expired, or already used. Please verify face again to register this device.',
+                ]);
+            }
+
+            // Ensure token is bound to the requesting device if device_uuid was recorded during verification
+            if ($tokenRecord->device_uuid && $tokenRecord->device_uuid !== $validated['device_uuid']) {
+                throw ValidationException::withMessages([
+                    'face_verification_token' => 'Face verification token was issued for a different device.',
+                ]);
+            }
+
+            // Mark face verification token as consumed atomically
+            $tokenRecord->update([
+                'used_at' => now('Asia/Manila'),
             ]);
-        }
 
-        // Mark face verification token as consumed
-        $tokenRecord->update([
-            'used_at' => now('Asia/Manila'),
-        ]);
-
-        // Register or update device request without touching or duplicating the existing face template
-        $device = ApprovedDevice::withTrashed()->updateOrCreate(
-            [
-                'employee_id' => $employee->id,
-                'device_uuid' => $validated['device_uuid'],
-            ],
-            [
-                'device_name' => $validated['device_name'] ?? null,
-                'device_model' => $validated['device_model'] ?? null,
-                'device_os' => $validated['device_os'] ?? null,
-                'status' => 'pending',
-                'verified_via_face' => true,
-                'registered_at' => now('Asia/Manila'),
-                'approved_by' => null,
-                'approved_at' => null,
-                'rejection_reason' => null,
-                'deleted_at' => null,
-            ]
-        );
+            // Register or update device request without touching or duplicating the existing face template
+            return ApprovedDevice::withTrashed()->updateOrCreate(
+                [
+                    'employee_id' => $employee->id,
+                    'device_uuid' => $validated['device_uuid'],
+                ],
+                [
+                    'device_name' => $validated['device_name'] ?? null,
+                    'device_model' => $validated['device_model'] ?? null,
+                    'device_os' => $validated['device_os'] ?? null,
+                    'public_key' => $validated['public_key'] ?? null,
+                    'status' => 'pending',
+                    'verified_via_face' => true,
+                    'registered_at' => now('Asia/Manila'),
+                    'approved_by' => null,
+                    'approved_at' => null,
+                    'rejection_reason' => null,
+                    'deleted_at' => null,
+                ]
+            );
+        });
 
         return response()->json([
             'success' => true,
@@ -121,6 +133,7 @@ class DeviceRegistrationController extends Controller
                 'success' => true,
                 'registered' => false,
                 'status' => 'unregistered',
+                'is_approved' => false,
                 'message' => 'This device is not registered.',
             ]);
         }
@@ -129,6 +142,8 @@ class DeviceRegistrationController extends Controller
             'success' => true,
             'registered' => true,
             'status' => $device->status,
+            'is_approved' => $device->isApproved(),
+            'rejection_reason' => $device->rejection_reason,
             'verified_via_face' => (bool) $device->verified_via_face,
             'approved_at' => $device->approved_at?->toIso8601String(),
             'device' => [
@@ -137,6 +152,8 @@ class DeviceRegistrationController extends Controller
                 'device_name' => $device->device_name,
                 'device_model' => $device->device_model,
                 'status' => $device->status,
+                'is_approved' => $device->isApproved(),
+                'rejection_reason' => $device->rejection_reason,
             ],
         ]);
     }

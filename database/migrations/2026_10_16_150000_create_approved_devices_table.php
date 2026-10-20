@@ -16,7 +16,7 @@ return new class extends Migration
                 $table->string('device_name')->nullable();
                 $table->string('device_model')->nullable();
                 $table->string('device_os')->nullable();
-                $table->enum('status', ['pending', 'approved', 'revoked'])->default('pending');
+                $table->enum('status', ['pending', 'approved', 'rejected', 'revoked'])->default('pending');
                 $table->boolean('verified_via_face')->default(false);
                 $table->timestamp('registered_at')->nullable();
                 $table->foreignId('approved_by')->nullable()->constrained('users')->nullOnDelete();

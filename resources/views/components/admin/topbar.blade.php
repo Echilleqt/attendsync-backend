@@ -7,8 +7,8 @@
         aria-expanded="false"
         aria-controls="admin-sidebar"
     >
-        <svg class="toggle-open-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
-        <svg class="toggle-close-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        <x-lucide-menu class="toggle-open-icon" aria-hidden="true" />
+        <x-lucide-x class="toggle-close-icon" aria-hidden="true" />
     </button>
     <div class="topbar-heading">
         <span class="topbar-context">ATTENDANCE MANAGEMENT / ADMIN</span>
@@ -22,8 +22,11 @@
 
     <div class="topbar-meta">
         <div class="topbar-date">
-            <span class="topbar-date-label">Today</span>
-            <strong>{{ now()->timezone(config('app.timezone'))->format('D, M j, Y') }}</strong>
+            <x-lucide-calendar class="topbar-date-icon" aria-hidden="true" />
+            <div>
+                <span class="topbar-date-label">Today</span>
+                <strong>{{ now()->timezone(config('app.timezone'))->format('D, M j, Y') }}</strong>
+            </div>
         </div>
     </div>
 </header>

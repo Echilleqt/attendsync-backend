@@ -40,6 +40,13 @@ class DeviceAuthorizationService
                 ]);
             }
 
+            if ($device->status === 'rejected') {
+                $reasonMsg = $device->rejection_reason ? " Reason: {$device->rejection_reason}" : '';
+                throw ValidationException::withMessages([
+                    'device' => "This device registration has been rejected by the administrator.{$reasonMsg}",
+                ]);
+            }
+
             if ($device->status === 'revoked') {
                 throw ValidationException::withMessages([
                     'device' => 'This device has been revoked by the administrator.',

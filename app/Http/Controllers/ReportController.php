@@ -15,13 +15,13 @@ class ReportController extends Controller
         $validated = $request->validate([
             'from_date' => ['nullable', 'date_format:Y-m-d'],
             'to_date' => ['nullable', 'date_format:Y-m-d'],
-            'status' => ['nullable', 'in:present,late,absent,on_leave'],
+            'status' => ['nullable', 'in:present,late,absent,incomplete,on_leave'],
         ]);
 
         $fromDate = $validated['from_date']
-            ?? Carbon::today()->startOfMonth()->format('Y-m-d');
+            ?? Carbon::today('Asia/Manila')->startOfMonth()->format('Y-m-d');
         $toDate = $validated['to_date']
-            ?? Carbon::today()->format('Y-m-d');
+            ?? Carbon::today('Asia/Manila')->format('Y-m-d');
         $status = $validated['status'] ?? null;
 
         if ($fromDate > $toDate) {
@@ -30,18 +30,19 @@ class ReportController extends Controller
             ]);
         }
 
-        $query = Attendance::with('employee')
+        $query = Attendance::with(['employee', 'schedule'])
             ->whereBetween('attendance_date', [
                 $fromDate,
                 $toDate,
             ])
             ->latest('attendance_date')
-            ->latest('time_in');
+            ->latest('am_time_in');
 
         if ($status && in_array($status, [
             'present',
             'late',
             'absent',
+            'incomplete',
             'on_leave',
         ])) {
             $query->where('status', $status);
@@ -67,6 +68,10 @@ class ReportController extends Controller
             ->where('status', 'absent')
             ->count();
 
+        $incompleteCount = (clone $summaryQuery)
+            ->where('status', 'incomplete')
+            ->count();
+
         $onLeaveCount = (clone $summaryQuery)
             ->where('status', 'on_leave')
             ->count();
@@ -74,6 +79,7 @@ class ReportController extends Controller
         $totalRecords = $presentCount
             + $lateCount
             + $absentCount
+            + $incompleteCount
             + $onLeaveCount;
 
         return view('admin.reports.index', compact(
@@ -84,6 +90,7 @@ class ReportController extends Controller
             'presentCount',
             'lateCount',
             'absentCount',
+            'incompleteCount',
             'onLeaveCount',
             'totalRecords'
         ));

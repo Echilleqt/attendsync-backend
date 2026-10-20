@@ -1,64 +1,73 @@
 <aside class="sidebar" id="admin-sidebar" aria-label="Main navigation">
-    <a class="sidebar-brand" href="{{ route('admin.dashboard') }}">
-        <span class="brand-mark" aria-hidden="true">
-            <img src="{{ asset('images/attendsync.png') }}?v=20261003-circle" alt="">
-        </span>
-        <span class="brand-copy">
-            <span class="brand">ATTENDSYNC</span>
-            <span class="brand-subtitle">Attendance management</span>
-        </span>
-    </a>
+    <div class="sidebar-header-row">
+        <a class="sidebar-brand" href="{{ route('admin.dashboard') }}" title="ATTENDSYNC Admin Portal">
+            <span class="brand-mark" aria-hidden="true">
+                <img src="{{ asset('images/attendsync.png') }}?v=20261003-circle" alt="ATTENDSYNC Logo">
+            </span>
+            <span class="brand-copy">
+                <span class="brand">ATTENDSYNC</span>
+                <span class="brand-subtitle">Attendance System</span>
+            </span>
+        </a>
+        <button type="button" class="sidebar-close-btn" data-sidebar-close aria-label="Close navigation menu">
+            <x-lucide-x class="w-5 h-5" aria-hidden="true" />
+        </button>
+    </div>
 
     <div class="sidebar-school">
         <span class="sidebar-school-label">WORKSPACE</span>
         <strong>Bansud Central School</strong>
-        <span>Administrator portal</span>
+        <span>Administrator Portal</span>
     </div>
 
     <nav class="sidebar-nav">
         <p class="menu-title">Overview</p>
-        <a href="{{ route('admin.dashboard') }}" class="nav-link {{ request()->routeIs('admin.dashboard') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg></span>
+        <a href="{{ route('admin.dashboard') }}" class="nav-link {{ request()->routeIs('admin.dashboard') ? 'active' : '' }}" title="Dashboard">
+            <x-lucide-layout-dashboard class="nav-icon" aria-hidden="true" />
             <span>Dashboard</span>
         </a>
 
-        <p class="menu-title">People &amp; attendance</p>
-        <a href="{{ route('admin.employees.index') }}" class="nav-link {{ request()->routeIs('admin.employees.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 5.5a3 3 0 0 1 0 5.8M17 14a4.8 4.8 0 0 1 3.5 4.6"/></svg></span>
+        <p class="menu-title">People &amp; Attendance</p>
+        <a href="{{ route('admin.employees.index') }}" class="nav-link {{ request()->routeIs('admin.employees.*') ? 'active' : '' }}" title="Employees">
+            <x-lucide-users class="nav-icon" aria-hidden="true" />
             <span>Employees</span>
         </a>
-        <a href="{{ route('admin.departments.index') }}" class="nav-link {{ request()->routeIs('admin.departments.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg></span>
+        <a href="{{ route('admin.departments.index') }}" class="nav-link {{ request()->routeIs('admin.departments.*') ? 'active' : '' }}" title="Departments">
+            <x-lucide-building-2 class="nav-icon" aria-hidden="true" />
             <span>Departments</span>
         </a>
-        <a href="{{ route('admin.schedules.index') }}" class="nav-link {{ request()->routeIs('admin.schedules.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
+        <a href="{{ route('admin.positions.index') }}" class="nav-link {{ request()->routeIs('admin.positions.*') ? 'active' : '' }}" title="Positions">
+            <x-lucide-briefcase class="nav-icon" aria-hidden="true" />
+            <span>Positions</span>
+        </a>
+        <a href="{{ route('admin.schedules.index') }}" class="nav-link {{ request()->routeIs('admin.schedules.*') ? 'active' : '' }}" title="Schedules">
+            <x-lucide-calendar-clock class="nav-icon" aria-hidden="true" />
             <span>Schedules</span>
         </a>
-        <a href="{{ route('admin.devices.index') }}" class="nav-link {{ request()->routeIs('admin.devices.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></span>
+        <a href="{{ route('admin.devices.index') }}" class="nav-link {{ request()->routeIs('admin.devices.*') ? 'active' : '' }}" title="Devices">
+            <x-lucide-smartphone class="nav-icon" aria-hidden="true" />
             <span>Devices</span>
         </a>
-        <a href="{{ route('admin.attendance.index') }}" class="nav-link {{ request()->routeIs('admin.attendance.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.2 2"/></svg></span>
+        <a href="{{ route('admin.attendance.index') }}" class="nav-link {{ request()->routeIs('admin.attendance.*') ? 'active' : '' }}" title="Attendance">
+            <x-lucide-clipboard-check class="nav-icon" aria-hidden="true" />
             <span>Attendance</span>
         </a>
-        <a href="{{ route('admin.attendance-correction-requests.index') }}" class="nav-link {{ request()->routeIs('admin.attendance-correction-requests.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M7 3.8h7l4 4V20H7a2 2 0 0 1-2-2V5.8a2 2 0 0 1 2-2Z"/><path d="M14 4v4h4M9 12h6M9 15.5h6"/></svg></span>
-            <span>Attendance requests</span>
+        <a href="{{ route('admin.attendance-correction-requests.index') }}" class="nav-link {{ request()->routeIs('admin.attendance-correction-requests.*') ? 'active' : '' }}" title="Attendance Requests">
+            <x-lucide-file-pen-line class="nav-icon" aria-hidden="true" />
+            <span>Attendance Requests</span>
         </a>
-        <a href="{{ route('admin.reports.index') }}" class="nav-link {{ request()->routeIs('admin.reports.index') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M4 19.5V13M10 19.5V5M16 19.5V9M22 19.5V3"/></svg></span>
+        <a href="{{ route('admin.reports.index') }}" class="nav-link {{ request()->routeIs('admin.reports.index') ? 'active' : '' }}" title="Reports">
+            <x-lucide-chart-column class="nav-icon" aria-hidden="true" />
             <span>Reports</span>
         </a>
-        <a href="{{ route('admin.reports.dtr') }}" class="nav-link {{ request()->routeIs('admin.reports.dtr*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>
+        <a href="{{ route('admin.reports.dtr') }}" class="nav-link {{ request()->routeIs('admin.reports.dtr*') ? 'active' : '' }}" title="CSC Form 48 (DTR)">
+            <x-lucide-file-spreadsheet class="nav-icon" aria-hidden="true" />
             <span>CSC Form 48 (DTR)</span>
         </a>
 
         <p class="menu-title">Administration</p>
-        <a href="{{ route('admin.settings.index') }}" class="nav-link {{ request()->routeIs('admin.settings.*') ? 'active' : '' }}">
-            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="12" r="3"/><path d="m19.3 13.7 1.1.9-1.5 2.6-1.4-.5a7.6 7.6 0 0 1-1.6.9l-.3 1.5h-3l-.3-1.5a7.6 7.6 0 0 1-1.6-.9l-1.4.5-1.5-2.6 1.1-.9a7.2 7.2 0 0 1 0-1.8l-1.1-.9 1.5-2.6 1.4.5a7.6 7.6 0 0 1 1.6-.9l.3-1.5h3l.3 1.5a7.6 7.6 0 0 1 1.6.9l1.4-.5 1.5 2.6-1.1.9a7.2 7.2 0 0 1 0 1.8Z"/></svg></span>
+        <a href="{{ route('admin.settings.index') }}" class="nav-link {{ request()->routeIs('admin.settings.*') ? 'active' : '' }}" title="Settings">
+            <x-lucide-settings class="nav-icon" aria-hidden="true" />
             <span>Settings</span>
         </a>
     </nav>
@@ -74,8 +83,8 @@
 
         <form method="POST" action="{{ route('logout') }}">
             @csrf
-            <button type="submit" class="logout-button">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10 5H5v14h5M14 8l4 4-4 4M8 12h10"/></svg>
+            <button type="submit" class="logout-button" title="Sign out of administrative session">
+                <x-lucide-log-out class="nav-icon logout-icon" />
                 <span>Sign out</span>
             </button>
         </form>

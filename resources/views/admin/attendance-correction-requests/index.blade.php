@@ -17,7 +17,10 @@
     </div>
 
     @if (session('success'))
-        <div class="alert alert-success">{{ session('success') }}</div>
+        <div class="alert alert-success">
+            <x-lucide-circle-check class="alert-icon" aria-hidden="true" />
+            <span>{{ session('success') }}</span>
+        </div>
     @endif
 
     <div class="employee-panel">
@@ -27,7 +30,7 @@
                 <p>Open a request to review its reason, requested times, and current attendance.</p>
             </div>
             <form method="GET" action="{{ route('admin.attendance-correction-requests.index') }}" class="report-filter-form">
-                <div class="report-filter-field">
+                <div class="report-filter-field filter-compact">
                     <label for="status">Status</label>
                     <select id="status" name="status">
                         <option value="">All requests</option>
@@ -36,14 +39,21 @@
                         <option value="rejected" @selected($status === 'rejected')>Rejected</option>
                     </select>
                 </div>
-                <button type="submit" class="btn-primary">Filter</button>
-                @if ($status !== '')
-                    <a href="{{ route('admin.attendance-correction-requests.index') }}" class="btn-secondary">Reset</a>
-                @endif
+                <div class="report-filter-actions">
+                    <button type="submit" class="btn-primary">
+                        <x-lucide-list-filter class="w-4 h-4" aria-hidden="true" />
+                        <span>Filter</span>
+                    </button>
+                    @if ($status !== '')
+                        <a href="{{ route('admin.attendance-correction-requests.index') }}" class="btn-secondary">
+                            <span>Reset</span>
+                        </a>
+                    @endif
+                </div>
             </form>
         </div>
 
-        <div class="employee-table-wrapper">
+        <div class="table-responsive">
             <table class="employee-table">
                 <thead>
                     <tr>
@@ -53,7 +63,7 @@
                         <th>Requested Times</th>
                         <th>Submitted</th>
                         <th>Status</th>
-                        <th>Review</th>
+                        <th style="text-align: right;">Review</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -61,30 +71,41 @@
                         <tr>
                             <td>
                                 <strong>{{ $attendanceRequest->employee?->full_name ?? 'Employee unavailable' }}</strong><br>
-                                <small>{{ $attendanceRequest->employee?->employee_id ?? '—' }}</small>
+                                <small class="table-meta-line">{{ $attendanceRequest->employee?->employee_id ?? '—' }}</small>
                             </td>
                             <td>{{ $attendanceRequest->attendance_date->format('M d, Y') }}</td>
-                            <td>{{ ucfirst(str_replace('_', ' ', $attendanceRequest->request_type)) }}</td>
                             <td>
-                                In: {{ $attendanceRequest->requested_time_in ? \Carbon\Carbon::parse($attendanceRequest->requested_time_in)->format('h:i A') : '—' }}<br>
-                                Out: {{ $attendanceRequest->requested_time_out ? \Carbon\Carbon::parse($attendanceRequest->requested_time_out)->format('h:i A') : '—' }}
+                                <span class="badge badge-neutral">
+                                    {{ ucfirst(str_replace('_', ' ', $attendanceRequest->request_type)) }}
+                                </span>
                             </td>
-                            <td>{{ $attendanceRequest->created_at->format('M d, Y h:i A') }}</td>
+                            <td>
+                                <div><strong class="text-xs text-secondary">In:</strong> {{ $attendanceRequest->requested_time_in ? \Carbon\Carbon::parse($attendanceRequest->requested_time_in)->format('h:i A') : '—' }}</div>
+                                <div><strong class="text-xs text-secondary">Out:</strong> {{ $attendanceRequest->requested_time_out ? \Carbon\Carbon::parse($attendanceRequest->requested_time_out)->format('h:i A') : '—' }}</div>
+                            </td>
+                            <td>
+                                <span class="text-xs text-secondary">{{ $attendanceRequest->created_at->format('M d, Y h:i A') }}</span>
+                            </td>
                             <td>
                                 <span class="status-badge {{ $attendanceRequest->status === 'approved' ? 'status-present' : ($attendanceRequest->status === 'rejected' ? 'status-absent' : 'status-late') }}">
                                     {{ ucfirst($attendanceRequest->status) }}
                                 </span>
                             </td>
-                            <td>
-                                <a class="table-action edit-action" href="{{ route('admin.attendance-correction-requests.show', $attendanceRequest) }}">
-                                    {{ $attendanceRequest->status === 'pending' ? 'Evaluate' : 'View details' }}
-                                </a>
+                            <td style="text-align: right;">
+                                <div class="employee-actions">
+                                    <a class="table-action edit-action" href="{{ route('admin.attendance-correction-requests.show', $attendanceRequest) }}">
+                                        <x-lucide-eye class="w-3.5 h-3.5" aria-hidden="true" />
+                                        <span>{{ $attendanceRequest->status === 'pending' ? 'Evaluate' : 'Details' }}</span>
+                                    </a>
+                                </div>
                             </td>
                         </tr>
                     @empty
                         <tr>
                             <td colspan="7" class="empty-employees">
-                                <div class="empty-icon"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3.8h7l4 4V20H7a2 2 0 0 1-2-2V5.8a2 2 0 0 1 2-2Z"/><path d="M14 4v4h4M9 12h6M9 15.5h6"/></svg></div>
+                                <div class="empty-icon" aria-hidden="true">
+                                    <x-lucide-file-pen-line class="w-8 h-8 text-slate-400" />
+                                </div>
                                 <h4>No correction requests found</h4>
                                 <p>Employee requests will appear here when submitted.</p>
                             </td>
