@@ -15,10 +15,15 @@ class DtrController extends Controller
 
     public function index(Request $request)
     {
+        $validated = $request->validate([
+            'employee_id' => ['nullable', 'exists:employees,id'],
+            'month' => ['nullable', 'date_format:Y-m'],
+        ]);
+
         $employees = Employee::orderBy('last_name')->get();
 
-        $selectedEmployeeId = $request->query('employee_id', $employees->first()?->id);
-        $month = $request->query('month', Carbon::now('Asia/Manila')->format('Y-m'));
+        $selectedEmployeeId = $validated['employee_id'] ?? $employees->first()?->id;
+        $month = $validated['month'] ?? Carbon::now('Asia/Manila')->format('Y-m');
 
         $selectedEmployee = $selectedEmployeeId ? Employee::find($selectedEmployeeId) : null;
         $dtrData = null;
@@ -32,9 +37,13 @@ class DtrController extends Controller
 
     public function print(Request $request)
     {
-        $employeeId = $request->query('employee_id');
-        $month = $request->query('month', Carbon::now('Asia/Manila')->format('Y-m'));
+        $validated = $request->validate([
+            'employee_id' => ['required', 'exists:employees,id'],
+            'month' => ['nullable', 'date_format:Y-m'],
+        ]);
 
+        $employeeId = $validated['employee_id'];
+        $month = $validated['month'] ?? Carbon::now('Asia/Manila')->format('Y-m');
         $employee = Employee::findOrFail($employeeId);
         $dtrData = $this->dtrService->generateMonthlyDtr($employee, $month);
 

@@ -14,7 +14,10 @@ class PositionController extends Controller
 {
     public function index(Request $request): View
     {
-        $selectedDepartment = $request->query('department_id');
+        $filters = $request->validate([
+            'department_id' => ['nullable', 'exists:departments,id'],
+        ]);
+        $selectedDepartment = $filters['department_id'] ?? null;
 
         $query = Position::with('department')
             ->withCount('employees')

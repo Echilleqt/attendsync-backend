@@ -153,11 +153,12 @@ Face biometrics can be enrolled, verified, checked, or revoked using dedicated A
 2. **Enrollment**: `POST /api/face/enroll` (multipart/form-data)
    - `face_image` (or `image` or `photo`): JPEG or PNG image containing exactly one face (64x64 to 6000x6000px).
    - Generates and encrypts a 128-dimensional biometric embedding template on the server.
-   - Re-enrolling replaces any previously enrolled face template.
+   - Enrollment is stored against the authenticated employee account and does not overwrite an existing face template.
 
 3. **Verification**: `POST /api/face/verify` (multipart/form-data)
    - `face_image` (or `image` or `photo`): Candidate selfie capture.
-   - Compares candidate embedding against the enrolled template using Euclidean distance with threshold (default 0.60).
+   - Compares the candidate only against the enrolled template belonging to the authenticated employee account.
+   - Attendance and device registration use separate Euclidean-distance cutoffs (default 0.45). Device-registration requests must also prove possession of the device key.
    - On match, returns a single-use `face_verification_token` valid for 2 minutes:
      ```json
      {
@@ -175,5 +176,11 @@ Face biometrics can be enrolled, verified, checked, or revoked using dedicated A
 
 5. **Time In & Time Out Submission**:
    - Include `face_verification_token` with `POST /api/attendance/time-in` or `/api/attendance/time-out`.
-   - The token is verified against the database and marked as consumed (`used_at`).
+   - The token is scoped to its employee, attendance purpose, and device, and marked as consumed (`used_at`) in the attendance transaction. A token issued to another employee cannot authorize attendance.
    - If `FACE_RECOGNITION_REQUIRE_FOR_ATTENDANCE=true`, submission without a valid `face_verification_token` is rejected.
+
+Configure stricter matching with `FACE_RECOGNITION_ATTENDANCE_THRESHOLD` and
+`FACE_RECOGNITION_DEVICE_REGISTRATION_THRESHOLD` (both default to `0.45`;
+lower values require a closer match and may reject legitimate captures).
+Face matching is probabilistic and is not a substitute for liveness detection
+or other identity proof.

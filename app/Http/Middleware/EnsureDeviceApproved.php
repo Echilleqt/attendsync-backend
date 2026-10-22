@@ -46,6 +46,8 @@ class EnsureDeviceApproved
             ]);
         }
 
+        $request->attributes->set('approved_device_id', $device?->id);
+
         return $next($request);
     }
 }

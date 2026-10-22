@@ -9,6 +9,10 @@ use Illuminate\Validation\ValidationException;
 
 class DeviceAuthorizationService
 {
+    public function __construct(protected DeviceProofService $deviceProofService)
+    {
+    }
+
     /**
      * Validate that the requesting device is authorized for attendance submission.
      *
@@ -52,6 +56,13 @@ class DeviceAuthorizationService
                     'device' => 'This device has been revoked by the administrator.',
                 ]);
             }
+
+            if (!$device->public_key) {
+                throw ValidationException::withMessages([
+                    'device' => 'This device must be registered again to establish secure device identity.',
+                ]);
+            }
+            $this->deviceProofService->assertValid($request, $device->public_key);
 
             return $device;
         }

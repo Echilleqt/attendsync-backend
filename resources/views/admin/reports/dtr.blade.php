@@ -85,7 +85,7 @@
                     <tbody>
                         @foreach($dtrData['days'] as $row)
                         <tr class="{{ $row['is_weekend'] ? 'dtr-row-weekend' : '' }}">
-                            <td class="font-semibold">{{ $row['day'] }}</td>
+                            <td class="font-semibold">{{ $row['day'] }}@if($row['needs_review'])<sup>*</sup>@endif</td>
                             <td>{{ $row['am_in'] }}</td>
                             <td>{{ $row['am_out'] }}</td>
                             <td>{{ $row['pm_in'] }}</td>
@@ -102,6 +102,10 @@
                     </tbody>
                 </table>
             </div>
+
+            @if(collect($dtrData['days'])->contains('needs_review', true))
+                <p class="text-sm mt-2">* Incomplete or mismatched attendance session. The recorded times were not changed; please review and resolve the attendance record. Undertime totals are withheld while a record is unresolved.</p>
+            @endif
 
             <div class="dtr-paper-certification">
                 <p>

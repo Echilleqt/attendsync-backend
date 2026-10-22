@@ -19,20 +19,6 @@
         </a>
     </div>
 
-    @if ($errors->any())
-        <div class="alert alert-danger">
-            <x-lucide-triangle-alert class="alert-icon" aria-hidden="true" />
-            <div>
-                <strong>Please resolve the following errors:</strong>
-                <ul>
-                    @foreach ($errors->all() as $error)
-                        <li>{{ $error }}</li>
-                    @endforeach
-                </ul>
-            </div>
-        </div>
-    @endif
-
     <div class="employee-panel">
         <form method="POST" action="{{ route('admin.employees.store') }}" class="panel-form">
             @csrf

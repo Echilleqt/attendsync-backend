@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#10243d">
 
-    <title>Login | ATTENDSYNC</title>
+    <title>Sign in | ATTENDSYNC</title>
     <link rel="icon" type="image/png" href="{{ asset('images/attendsync.png') }}?v=20261003">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,14 +18,14 @@
 
     <style>
         :root {
-            --navy: #14264F;
-            --navy-light: #1b356d;
-            --primary-blue: #2457D6;
-            --primary-blue-dark: #1b44ab;
-            --page-bg: #F3F6FB;
-            --text-dark: #0F172A;
-            --text-muted: #64748B;
-            --border: #E2E8F0;
+            --navy: #10243d;
+            --navy-light: #193756;
+            --primary-blue: #315f91;
+            --primary-blue-dark: #254c78;
+            --page-bg: #f3f6fa;
+            --text-dark: #17263a;
+            --text-muted: #66758a;
+            --border: #dfe6ee;
             --white: #ffffff;
         }
 
@@ -32,6 +33,14 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+
+        *::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
         }
 
         body {
@@ -39,6 +48,7 @@
             font-family: 'Inter', sans-serif;
             background: var(--page-bg);
             color: var(--text-dark);
+            -webkit-font-smoothing: antialiased;
         }
 
         .login-wrapper {
@@ -71,7 +81,7 @@
             width: 430px;
             height: 430px;
             border-radius: 50%;
-            background: rgba(49, 91, 255, 0.12);
+            background: rgba(87, 137, 184, 0.13);
             top: -190px;
             right: -160px;
         }
@@ -180,6 +190,12 @@
             font-weight: 600;
         }
 
+        .feature-item svg {
+            width: 16px;
+            height: 16px;
+            flex: 0 0 16px;
+        }
+
         .feature-check {
             width: 22px;
             height: 22px;
@@ -189,8 +205,8 @@
             justify-content: center;
 
             border-radius: 50%;
-            background: rgba(49, 91, 255, 0.25);
-            color: #8fa8ff;
+            background: rgba(89, 145, 197, 0.22);
+            color: #afc9e2;
         }
 
         .brand-footer {
@@ -199,6 +215,16 @@
 
             color: #8796b4;
             font-size: 11px;
+        }
+
+        .brand-school {
+            position: relative;
+            z-index: 2;
+            margin-top: -8px;
+            color: #b9c9da;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1.1px;
         }
 
         /* =========================================
@@ -223,6 +249,10 @@
         }
 
         .mobile-brand {
+            display: none;
+        }
+
+        .mobile-school-name {
             display: none;
         }
 
@@ -288,6 +318,12 @@
             pointer-events: none;
         }
 
+        .input-icon svg {
+            display: block;
+            width: 16px;
+            height: 16px;
+        }
+
         .form-control {
             width: 100%;
             height: 53px;
@@ -310,7 +346,7 @@
         .form-control:focus {
             border-color: var(--primary-blue);
             background: #ffffff;
-            box-shadow: 0 0 0 4px rgba(49, 91, 255, 0.10);
+            box-shadow: 0 0 0 4px rgba(49, 95, 145, 0.12);
         }
 
         .password-input {
@@ -330,6 +366,14 @@
 
             cursor: pointer;
             font-size: 16px;
+        }
+
+        .password-toggle svg,
+        .security-note svg {
+            display: block;
+            width: 16px;
+            height: 16px;
+            flex: 0 0 16px;
         }
 
         .form-options {
@@ -382,14 +426,14 @@
 
             cursor: pointer;
 
-            box-shadow: 0 8px 18px rgba(49, 91, 255, 0.20);
+            box-shadow: 0 7px 16px rgba(16, 36, 61, 0.16);
             transition: 0.25s ease;
         }
 
         .login-button:hover {
             background: var(--primary-blue-dark);
             transform: translateY(-2px);
-            box-shadow: 0 12px 22px rgba(49, 91, 255, 0.28);
+            box-shadow: 0 10px 20px rgba(16, 36, 61, 0.2);
         }
 
         .login-button:active {
@@ -420,6 +464,11 @@
 
         .form-bottom strong {
             color: #526174;
+        }
+
+        :focus-visible {
+            outline: 3px solid rgba(79, 131, 179, 0.58);
+            outline-offset: 3px;
         }
 
         /* =========================================
@@ -506,6 +555,17 @@
                 font-size: 23px;
             }
 
+            .mobile-school-name {
+                display: block;
+                margin: -14px 0 22px;
+                color: var(--text-muted);
+                font-size: 10px;
+                font-weight: 600;
+                letter-spacing: 0.75px;
+                text-align: center;
+                text-transform: uppercase;
+            }
+
             .form-heading h2 {
                 font-size: 28px;
             }
@@ -549,6 +609,7 @@
                 <span class="brand-wordmark">ATTENDSYNC</span>
 
             </div>
+            <div class="brand-school">BANSUD CENTRAL SCHOOL · ATTENDANCE MANAGEMENT</div>
 
             <div class="brand-content">
 
@@ -602,6 +663,7 @@
                     <span class="brand-wordmark">ATTENDSYNC</span>
 
                 </div>
+                <div class="mobile-school-name">Bansud Central School</div>
 
                 <div class="form-heading">
 

@@ -11,7 +11,6 @@ use App\Models\Employee;
 use App\Models\FaceVerificationToken;
 use App\Models\Schedule;
 use App\Services\AttendanceRuleService;
-use App\Services\DeviceAuthorizationService;
 use App\Services\DtrService;
 use App\Services\NetworkRestrictionService;
 use Carbon\Carbon;
@@ -90,9 +89,6 @@ class AttendanceController extends Controller
             ], 403);
         }
 
-        // Enforce device authorization check (Step 4)
-        app(DeviceAuthorizationService::class)->validateDevice($request, $employee);
-
         $validated = $request->validate([
             'employee_id' => ['prohibited'],
             'entry_type' => ['sometimes', 'nullable', 'string', 'in:morning_in,morning_out,afternoon_in,afternoon_out,am_in,am_out,pm_in,pm_out,time_in,time_out'],
@@ -136,6 +132,7 @@ class AttendanceController extends Controller
 
         try {
             return DB::transaction(function () use (
+                $request,
                 $employee,
                 $validated,
                 $photo,
@@ -144,7 +141,7 @@ class AttendanceController extends Controller
                 $requestedAction,
                 &$storedPath
             ): JsonResponse {
-                $usedMethod = $this->verifyBiometrics($validated, $employee, $now);
+                $usedMethod = $this->verifyBiometrics($request, $validated, $employee, $now);
 
                 $attendance = Attendance::query()
                     ->where('employee_id', $employee->id)
@@ -174,7 +171,7 @@ class AttendanceController extends Controller
                     'morning_in' => 'attendance-proofs',
                     'morning_out' => 'attendance-proofs/morning-out',
                     'afternoon_in' => 'attendance-proofs/afternoon-in',
-                    'afternoon_out' => 'attendance-proofs/time-out',
+                    'afternoon_out', 'legacy_time_out' => 'attendance-proofs/time-out',
                 };
 
                 $storedPath = $photo->store($folder, 'local');
@@ -206,11 +203,6 @@ class AttendanceController extends Controller
                     $attendance->am_time_out = $now;
                     $attendance->am_time_out_photo_path = $storedPath;
                     $attendance->am_time_out_verification_method = $usedMethod;
-
-                    // Undertime calculation if departing before morning scheduled departure
-                    if ($now->format('H:i:s') < $scheduleTimes['am_time_out']->format('H:i:s')) {
-                        $attendance->undertime_minutes += $now->diffInMinutes($scheduleTimes['am_time_out']);
-                    }
 
                     // AM session status complete
                     $isLateAm = $scheduleTimes['late_cutoff_am'] !== null && ($attendance->am_time_in?->format('H:i:s') ?? '00:00:00') > $scheduleTimes['late_cutoff_am']->format('H:i:s');
@@ -247,24 +239,30 @@ class AttendanceController extends Controller
                     $attendance->pm_time_out_verification_method = $usedMethod;
                     $attendance->time_out_verification_method = $usedMethod;
 
-                    // Undertime calculation if departing before afternoon scheduled departure
-                    if ($now->format('H:i:s') < $scheduleTimes['pm_time_out']->format('H:i:s')) {
-                        $attendance->undertime_minutes += $now->diffInMinutes($scheduleTimes['pm_time_out']);
-                    }
-
                     // PM session status complete
                     $isLatePm = $scheduleTimes['late_cutoff_pm'] !== null && ($attendance->pm_time_in?->format('H:i:s') ?? '00:00:00') > $scheduleTimes['late_cutoff_pm']->format('H:i:s');
                     $attendance->pm_status = $isLatePm ? 'late' : 'present';
                     $attendance->status = $this->attendanceRuleService->computeOverallStatus($attendance->am_status, $attendance->pm_status);
+                } elseif ($targetAction === 'legacy_time_out') {
+                    $attendance->time_out = $now;
+                    $attendance->time_out_photo_path = $storedPath;
+                    $attendance->time_out_verification_method = $usedMethod;
                 }
 
+                if ($targetAction !== 'legacy_time_out') {
+                    $attendance->undertime_minutes = $this->attendanceRuleService->calculateUndertime(
+                        $attendance,
+                        $applicableSchedule,
+                        $today
+                    );
+                }
                 $attendance->save();
 
                 $label = match ($targetAction) {
                     'morning_in' => 'Time In',
                     'morning_out' => 'Morning Time Out',
                     'afternoon_in' => 'Afternoon Time In',
-                    'afternoon_out' => 'Time Out',
+                    'afternoon_out', 'legacy_time_out' => 'Time Out',
                 };
 
                 $statusCode = ($targetAction === 'morning_in' || $requestedAction === 'time_in') ? 201 : 200;
@@ -308,6 +306,11 @@ class AttendanceController extends Controller
 
         // If hint is generic 'time_in':
         if ($hint === 'time_in') {
+            if ($this->isLegacyTwoEntryRecord($attendance)) {
+                throw ValidationException::withMessages([
+                    'attendance' => 'Time In has already been recorded for today.',
+                ]);
+            }
             if (!$attendance || !$attendance->am_time_in) {
                 // If past morning shift, this time_in is for afternoon
                 if ($now->greaterThanOrEqualTo($amCutoff)) {
@@ -338,7 +341,27 @@ class AttendanceController extends Controller
 
         // If hint is generic 'time_out':
         if ($hint === 'time_out') {
-            $hasTimeIn = $attendance && ($attendance->am_time_in || $attendance->pm_time_in || $attendance->time_in);
+            if ($this->isLegacyTwoEntryRecord($attendance)) {
+                if ($attendance->time_out) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Time Out has already been recorded for today.',
+                    ]);
+                }
+                if (
+                    !$scheduleTimes
+                    || $now->lessThanOrEqualTo($attendance->time_in)
+                    || $now->lessThan($scheduleTimes['pm_time_in'])
+                    || $now->greaterThan($scheduleTimes['pm_time_out'])
+                ) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Legacy Time Out must follow Time In and occur within the configured afternoon session.',
+                    ]);
+                }
+
+                return 'legacy_time_out';
+            }
+
+            $hasTimeIn = $attendance && ($attendance->am_time_in || $attendance->pm_time_in);
             if (!$hasTimeIn) {
                 throw ValidationException::withMessages([
                     'attendance' => 'Please record your Time In before recording Time Out.',
@@ -369,6 +392,9 @@ class AttendanceController extends Controller
         }
 
         // If no hint provided, automatically determine the next sequential action
+        if ($this->isLegacyTwoEntryRecord($attendance)) {
+            return $attendance->time_out ? 'complete' : 'legacy_time_out';
+        }
         return $this->determineNextAction($attendance, $schedule, $now);
     }
 
@@ -383,6 +409,11 @@ class AttendanceController extends Controller
 
         switch ($targetAction) {
             case 'morning_in':
+                if ($scheduleTimes && $now->greaterThanOrEqualTo($scheduleTimes['am_time_out'])) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Morning Time In must be recorded during the configured morning session.',
+                    ]);
+                }
                 if ($attendance && ($attendance->am_time_in || $attendance->photo_path)) {
                     throw ValidationException::withMessages([
                         'attendance' => 'An attendance record or proof photo already exists for today.',
@@ -391,7 +422,7 @@ class AttendanceController extends Controller
                 break;
 
             case 'morning_out':
-                if (!$attendance || (!$attendance->am_time_in && !$attendance->time_in)) {
+                if (!$attendance || !$attendance->am_time_in) {
                     throw ValidationException::withMessages([
                         'attendance' => 'Please record your Morning Time In before recording Morning Time Out.',
                     ]);
@@ -401,9 +432,23 @@ class AttendanceController extends Controller
                         'attendance' => 'Morning Time Out has already been recorded for today.',
                     ]);
                 }
+                $amIn = $attendance->am_time_in;
+                if ($scheduleTimes && (
+                    $now->lessThanOrEqualTo($amIn)
+                    || $now->greaterThan($scheduleTimes['am_time_out'])
+                )) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Morning Time Out must follow Morning Time In and occur no later than the configured morning session end.',
+                    ]);
+                }
                 break;
 
             case 'afternoon_in':
+                if ($scheduleTimes && $now->greaterThanOrEqualTo($scheduleTimes['pm_time_out'])) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Afternoon Time In must be recorded during the configured afternoon session.',
+                    ]);
+                }
                 if ($attendance && $attendance->pm_time_in) {
                     throw ValidationException::withMessages([
                         'attendance' => 'Afternoon Time In has already been recorded for today.',
@@ -418,14 +463,45 @@ class AttendanceController extends Controller
                 break;
 
             case 'afternoon_out':
-                if (!$attendance || (!$attendance->am_time_in && !$attendance->pm_time_in && !$attendance->time_in)) {
+                if (!$attendance || (!$attendance->am_time_in && !$attendance->pm_time_in)) {
                     throw ValidationException::withMessages([
                         'attendance' => 'Please record your Time In before recording Time Out.',
+                    ]);
+                }
+                if (!$attendance->pm_time_in) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Please record Afternoon Time In before recording Afternoon Time Out.',
                     ]);
                 }
                 if ($attendance->pm_time_out || ($attendance->time_out && $attendance->pm_time_out)) {
                     throw ValidationException::withMessages([
                         'attendance' => 'Time Out has already been recorded for today.',
+                    ]);
+                }
+                if ($scheduleTimes && (
+                    $now->lessThanOrEqualTo($attendance->pm_time_in)
+                    || $now->greaterThan($scheduleTimes['pm_time_out'])
+                )) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Afternoon Time Out must follow Afternoon Time In and occur no later than the configured afternoon session end.',
+                    ]);
+                }
+                break;
+
+            case 'legacy_time_out':
+                if (!$this->isLegacyTwoEntryRecord($attendance)) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'This record does not qualify for legacy two-entry compatibility.',
+                    ]);
+                }
+                if (
+                    !$scheduleTimes
+                    || $now->lessThanOrEqualTo($attendance->time_in)
+                    || $now->lessThan($scheduleTimes['pm_time_in'])
+                    || $now->greaterThan($scheduleTimes['pm_time_out'])
+                ) {
+                    throw ValidationException::withMessages([
+                        'attendance' => 'Legacy Time Out must follow Time In and occur within the configured afternoon session.',
                     ]);
                 }
                 break;
@@ -439,6 +515,10 @@ class AttendanceController extends Controller
 
     public function determineNextAction(?Attendance $attendance, ?Schedule $schedule = null, ?Carbon $now = null): string
     {
+        if ($this->isLegacyTwoEntryRecord($attendance)) {
+            return $attendance->time_out ? 'complete' : 'time_out';
+        }
+
         $now = $now ? $now->copy()->timezone('Asia/Manila') : Carbon::now('Asia/Manila');
         $scheduleTimes = $schedule ? $this->attendanceRuleService->getScheduleTimes($schedule, $now) : null;
         $amCutoff = $scheduleTimes['am_time_out'] ?? Carbon::parse($now->toDateString() . ' 12:00:00', 'Asia/Manila');
@@ -478,7 +558,7 @@ class AttendanceController extends Controller
         return 'complete';
     }
 
-    private function verifyBiometrics(array $validated, Employee $employee, Carbon $now): string
+    private function verifyBiometrics(Request $request, array $validated, Employee $employee, Carbon $now): string
     {
         $explicitMethod = $validated['verification_method'] ?? null;
         $fingerprintToken = $validated['biometric_verification_token'] ?? null;
@@ -512,8 +592,11 @@ class AttendanceController extends Controller
             $faceVerification = FaceVerificationToken::query()
                 ->where('token_hash', hash('sha256', $faceToken))
                 ->where('employee_id', $employee->id)
+                ->where('purpose', 'attendance')
+                ->where('device_uuid', $request->header('X-Device-Id'))
                 ->whereNull('used_at')
                 ->where('expires_at', '>', $now)
+                ->lockForUpdate()
                 ->first();
 
             if (!$faceVerification) {
@@ -534,9 +617,23 @@ class AttendanceController extends Controller
             ]);
         }
 
+        $approvedDeviceId = $request->attributes->get('approved_device_id');
+        if (!$approvedDeviceId) {
+            throw ValidationException::withMessages([
+                'biometric_verification_token' => 'Fingerprint verification requires the currently approved device.',
+            ]);
+        }
+
         $fingerprintVerification = BiometricVerification::query()
             ->where('token_hash', hash('sha256', $fingerprintToken))
             ->where('employee_id', $employee->id)
+            ->whereHas('credential', function ($query) use ($approvedDeviceId): void {
+                $query->where(
+                    'approved_device_id',
+                    $approvedDeviceId
+                )->whereNull('revoked_at')
+                    ->whereNotNull('verified_at');
+            })
             ->whereNull('used_at')
             ->where('expires_at', '>', $now)
             ->first();
@@ -692,7 +789,10 @@ class AttendanceController extends Controller
             ], 403);
         }
 
-        $month = $request->query('month', Carbon::now('Asia/Manila')->format('Y-m'));
+        $validated = $request->validate([
+            'month' => ['nullable', 'date_format:Y-m'],
+        ]);
+        $month = $validated['month'] ?? Carbon::now('Asia/Manila')->format('Y-m');
         $dtr = app(DtrService::class)->generateMonthlyDtr($employee, $month);
 
         return response()->json([
@@ -711,10 +811,10 @@ class AttendanceController extends Controller
             ?? ($attendance->employee ? $this->attendanceRuleService->resolveScheduleForEmployeeAndDate($attendance->employee, $attendance->attendance_date) : null)
             ?? $schedule;
 
-        $amIn = $attendance->am_time_in ?? $attendance->time_in;
+        $amIn = $attendance->am_time_in;
         $amOut = $attendance->am_time_out;
         $pmIn = $attendance->pm_time_in;
-        $pmOut = $attendance->pm_time_out ?? ($attendance->am_time_out ? null : $attendance->time_out);
+        $pmOut = $attendance->pm_time_out;
 
         $scheduleData = $schedule ? [
             'id' => $schedule->id,
@@ -738,15 +838,17 @@ class AttendanceController extends Controller
             'schedule' => $scheduleData,
             'attendance_date' => $attendance->attendance_date->format('Y-m-d'),
             // Backward compatible 2-entry timestamps
-            'time_in' => $amIn?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
-            'time_out' => ($attendance->pm_time_out ?? $attendance->time_out)?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
+            'time_in' => ($this->isLegacyTwoEntryRecord($attendance) ? $attendance->time_in : $amIn)
+                ?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
+            'time_out' => ($this->isLegacyTwoEntryRecord($attendance) ? $attendance->time_out : $attendance->pm_time_out)
+                ?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
             'time_in_verification_method' => $attendance->time_in_verification_method,
             'time_out_verification_method' => $attendance->time_out_verification_method,
             // 4-entry attendance timestamps
             'am_time_in' => $amIn?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
             'am_time_out' => $amOut?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
             'pm_time_in' => $pmIn?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
-            'pm_time_out' => ($attendance->pm_time_out ?? $attendance->time_out)?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
+            'pm_time_out' => $attendance->pm_time_out?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
             'am_status' => $attendance->am_status,
             'pm_status' => $attendance->pm_status,
             'status' => $attendance->status,
@@ -773,6 +875,16 @@ class AttendanceController extends Controller
             'created_at' => $attendance->created_at?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
             'updated_at' => $attendance->updated_at?->copy()->setTimezone('Asia/Manila')->format('Y-m-d\TH:i:sP'),
         ];
+    }
+
+    private function isLegacyTwoEntryRecord(?Attendance $attendance): bool
+    {
+        return $attendance !== null
+            && $attendance->time_in !== null
+            && $attendance->am_time_in === null
+            && $attendance->am_time_out === null
+            && $attendance->pm_time_in === null
+            && $attendance->pm_time_out === null;
     }
 
     public function photo(Attendance $attendance)

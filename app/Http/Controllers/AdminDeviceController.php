@@ -10,7 +10,10 @@ class AdminDeviceController extends Controller
 {
     public function index(Request $request)
     {
-        $status = $request->query('status');
+        $validated = $request->validate([
+            'status' => ['nullable', 'in:pending,approved,rejected,revoked'],
+        ]);
+        $status = $validated['status'] ?? null;
 
         $query = ApprovedDevice::with(['employee.user', 'approver'])
             ->latest('registered_at');
@@ -62,7 +65,10 @@ class AdminDeviceController extends Controller
 
     public function revoke(Request $request, ApprovedDevice $device)
     {
-        $reason = $request->input('reason', 'Revoked by administrator');
+        $validated = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+        $reason = $validated['reason'] ?? 'Revoked by administrator';
 
         $device->update([
             'status' => 'revoked',

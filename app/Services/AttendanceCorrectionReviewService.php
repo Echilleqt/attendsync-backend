@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Attendance;
 use App\Models\AttendanceCorrectionRequest;
-use App\Models\AttendanceSetting;
 use App\Models\User;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -58,19 +57,14 @@ class AttendanceCorrectionReviewService
             ->lockForUpdate()
             ->first();
 
-        if (
-            ($correction->request_type === 'missing_time_in' && $attendance?->time_in)
-            || ($correction->request_type === 'missing_time_out' && $attendance?->time_out)
-        ) {
-            throw ValidationException::withMessages([
-                'attendance' => 'The attendance event is no longer missing; review the record before approving.',
-            ]);
-        }
-
         $original = [
             'attendance_id' => $attendance?->id,
             'time_in' => $attendance?->time_in?->toDateTimeString(),
             'time_out' => $attendance?->time_out?->toDateTimeString(),
+            'am_time_in' => $attendance?->am_time_in?->toDateTimeString(),
+            'am_time_out' => $attendance?->am_time_out?->toDateTimeString(),
+            'pm_time_in' => $attendance?->pm_time_in?->toDateTimeString(),
+            'pm_time_out' => $attendance?->pm_time_out?->toDateTimeString(),
             'status' => $attendance?->status,
             'am_status' => $attendance?->am_status,
             'pm_status' => $attendance?->pm_status,
@@ -78,94 +72,90 @@ class AttendanceCorrectionReviewService
         ];
 
         $date = $correction->attendance_date->format('Y-m-d');
-        $timeIn = $correction->requested_time_in
-            ? (preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $correction->requested_time_in)
-                ? Carbon::parse($correction->requested_time_in, config('app.timezone'))
-                : Carbon::parse("$date {$correction->requested_time_in}", config('app.timezone')))
-            : $attendance?->time_in;
-        $timeOut = $correction->requested_time_out
-            ? (preg_match('/^\d{4}-\d{2}-\d{2}/', (string) $correction->requested_time_out)
-                ? Carbon::parse($correction->requested_time_out, config('app.timezone'))
-                : Carbon::parse("$date {$correction->requested_time_out}", config('app.timezone')))
-            : $attendance?->time_out;
-
-        if ($timeIn && $timeOut && $timeOut->lessThanOrEqualTo($timeIn)) {
-            throw ValidationException::withMessages([
-                'requested_time_out' => 'The approved Time Out must be later than Time In.',
-            ]);
-        }
-
-        $attendance ??= new Attendance();
-        $attendance->employee_id = $correction->employee_id;
-        $attendance->attendance_date = $date;
-
         $ruleService = app(AttendanceRuleService::class);
         $employee = $correction->employee;
         $schedule = $employee ? $ruleService->resolveScheduleForEmployeeAndDate($employee, $date) : null;
 
-        if ($schedule) {
-            $attendance->schedule_id = $schedule->id;
-            $times = $ruleService->getScheduleTimes($schedule, $date);
-
-            if ($correction->requested_time_in) {
-                if ($timeIn->format('H:i:s') <= $times['am_time_out']->format('H:i:s')) {
-                    $attendance->am_time_in = $timeIn;
-                    $attendance->time_in = $timeIn;
-                } else {
-                    $attendance->pm_time_in = $timeIn;
-                    if (empty($attendance->time_in)) {
-                        $attendance->time_in = $timeIn;
-                    }
-                }
-            } elseif ($timeIn) {
-                $attendance->time_in = $timeIn;
-                $attendance->am_time_in ??= $timeIn;
-            }
-
-            if ($correction->requested_time_out) {
-                if ($timeOut->format('H:i:s') >= $times['pm_time_in']->format('H:i:s')) {
-                    $attendance->pm_time_out = $timeOut;
-                    $attendance->time_out = $timeOut;
-                } else {
-                    $attendance->am_time_out = $timeOut;
-                    if (empty($attendance->time_out)) {
-                        $attendance->time_out = $timeOut;
-                    }
-                }
-            } elseif ($timeOut) {
-                $attendance->time_out = $timeOut;
-                $attendance->pm_time_out ??= $timeOut;
-            }
-
-            $endOfDay = Carbon::parse($date, 'Asia/Manila')->endOfDay();
-            $amStatus = $ruleService->evaluateAmStatus($attendance->am_time_in, $attendance->am_time_out, $schedule, $date, $endOfDay);
-            $pmStatus = $ruleService->evaluatePmStatus($attendance->pm_time_in, $attendance->pm_time_out, $schedule, $date, $endOfDay);
-
-            $attendance->am_status = $amStatus;
-            $attendance->pm_status = $pmStatus;
-            $attendance->status = $ruleService->computeOverallStatus($amStatus, $pmStatus);
-            $attendance->late_starting_time_snapshot = $times['late_cutoff_am']?->format('H:i:s');
-            $attendance->undertime_minutes = $ruleService->calculateUndertime($attendance, $schedule, $date);
-        } else {
-            $threshold = $attendance->late_starting_time_snapshot;
-            if ($timeIn && $threshold === null) {
-                $setting = AttendanceSetting::query()
-                    ->whereDate('effective_date', '<=', $date)
-                    ->orderByDesc('effective_date')
-                    ->first();
-                $threshold = $setting?->late_starting_time;
-            }
-
-            $status = $timeIn && $threshold
-                ? ($timeIn->format('H:i:s') > Carbon::parse($threshold)->format('H:i:s') ? 'late' : 'present')
-                : ($attendance->status ?? 'present');
-
-            $attendance->time_in = $timeIn;
-            $attendance->time_out = $timeOut;
-            $attendance->late_starting_time_snapshot = $threshold;
-            $attendance->status = $status;
+        if (!$schedule) {
+            throw ValidationException::withMessages([
+                'schedule' => 'This correction cannot be mapped safely because no applicable schedule is configured.',
+            ]);
         }
 
+        $timeIn = $correction->requested_time_in
+            ? $this->parseRequestedTime($correction->requested_time_in, $date, 'requested_time_in')
+            : null;
+        $timeOut = $correction->requested_time_out
+            ? $this->parseRequestedTime($correction->requested_time_out, $date, 'requested_time_out')
+            : null;
+
+        $attendance ??= new Attendance();
+        $attendance->employee_id = $correction->employee_id;
+        $attendance->attendance_date = $date;
+        $attendance->schedule_id = $schedule->id;
+        $times = $ruleService->getScheduleTimes($schedule, $date);
+
+        if ($timeIn) {
+            if (
+                $attendance->time_in
+                && !$attendance->am_time_in
+                && !$attendance->pm_time_in
+                && !$attendance->time_in->equalTo($timeIn)
+            ) {
+                throw ValidationException::withMessages([
+                    'requested_time_in' => 'The legacy Time In conflicts with the proposed correction; review the record before approving.',
+                ]);
+            }
+
+            $timeInSession = $this->sessionForTimeIn($timeIn, $times);
+            $field = $timeInSession.'_time_in';
+            if ($attendance->{$field}) {
+                throw ValidationException::withMessages([
+                    'requested_time_in' => 'The attendance event is no longer missing; review the record before approving.',
+                ]);
+            }
+            $attendance->{$field} = $timeIn;
+            $attendance->time_in ??= $timeIn;
+        }
+
+        if ($timeOut) {
+            if (
+                $attendance->time_out
+                && !$attendance->am_time_out
+                && !$attendance->pm_time_out
+                && !$attendance->time_out->equalTo($timeOut)
+            ) {
+                throw ValidationException::withMessages([
+                    'requested_time_out' => 'The legacy Time Out conflicts with the proposed correction; review the record before approving.',
+                ]);
+            }
+
+            $timeOutSession = $this->sessionForTimeOut($timeOut, $times);
+            $field = $timeOutSession.'_time_out';
+            $inField = $timeOutSession.'_time_in';
+            if ($attendance->{$field}) {
+                throw ValidationException::withMessages([
+                    'requested_time_out' => 'The attendance event is no longer missing; review the record before approving.',
+                ]);
+            }
+            if (!$attendance->{$inField} || $timeOut->lessThanOrEqualTo($attendance->{$inField})) {
+                throw ValidationException::withMessages([
+                    'requested_time_out' => 'The approved Time Out must be later than its matching session Time In.',
+                ]);
+            }
+            $attendance->{$field} = $timeOut;
+            $attendance->time_out = $attendance->pm_time_out ?? $timeOut;
+        }
+
+        $endOfDay = Carbon::parse($date, 'Asia/Manila')->endOfDay();
+        $amStatus = $ruleService->evaluateAmStatus($attendance->am_time_in, $attendance->am_time_out, $schedule, $date, $endOfDay);
+        $pmStatus = $ruleService->evaluatePmStatus($attendance->pm_time_in, $attendance->pm_time_out, $schedule, $date, $endOfDay);
+
+        $attendance->am_status = $amStatus;
+        $attendance->pm_status = $pmStatus;
+        $attendance->status = $ruleService->computeOverallStatus($amStatus, $pmStatus);
+        $attendance->late_starting_time_snapshot = $times['late_cutoff_am']?->format('H:i:s');
+        $attendance->undertime_minutes = $ruleService->calculateUndertime($attendance, $schedule, $date);
         $attendance->save();
 
         $correction->original_values = $original;
@@ -173,11 +163,64 @@ class AttendanceCorrectionReviewService
             'attendance_id' => $attendance->id,
             'time_in' => $attendance->time_in?->toDateTimeString(),
             'time_out' => $attendance->time_out?->toDateTimeString(),
+            'am_time_in' => $attendance->am_time_in?->toDateTimeString(),
+            'am_time_out' => $attendance->am_time_out?->toDateTimeString(),
+            'pm_time_in' => $attendance->pm_time_in?->toDateTimeString(),
+            'pm_time_out' => $attendance->pm_time_out?->toDateTimeString(),
             'am_status' => $attendance->am_status,
             'pm_status' => $attendance->pm_status,
             'status' => $attendance->status,
             'late_starting_time_snapshot' => $attendance->late_starting_time_snapshot,
             'reason' => $correction->reason,
         ];
+    }
+
+    private function sessionForTimeIn(Carbon $time, array $times): string
+    {
+        if (
+            $time->lessThan($times['am_time_out'])
+        ) {
+            return 'am';
+        }
+        if (
+            $time->greaterThanOrEqualTo($times['pm_time_in'])
+            && $time->lessThanOrEqualTo($times['pm_time_out'])
+        ) {
+            return 'pm';
+        }
+
+        throw ValidationException::withMessages([
+            'requested_time_in' => 'The approved Time In must fall within a configured work session.',
+        ]);
+    }
+
+    private function sessionForTimeOut(Carbon $time, array $times): string
+    {
+        if ($time->greaterThan($times['am_time_in']) && $time->lessThanOrEqualTo($times['am_time_out'])) {
+            return 'am';
+        }
+        if ($time->greaterThan($times['pm_time_in']) && $time->lessThanOrEqualTo($times['pm_time_out'])) {
+            return 'pm';
+        }
+
+        throw ValidationException::withMessages([
+            'requested_time_out' => 'The approved Time Out must fall within a configured work session.',
+        ]);
+    }
+
+    private function parseRequestedTime(string $value, string $date, string $field): Carbon
+    {
+        if (preg_match('/^\d{4}-\d{2}-\d{2}/', $value)) {
+            $time = Carbon::parse($value, 'Asia/Manila');
+            if ($time->toDateString() !== $date) {
+                throw ValidationException::withMessages([
+                    $field => 'The approved attendance time must be on the correction request date.',
+                ]);
+            }
+
+            return $time->setTimezone('Asia/Manila');
+        }
+
+        return Carbon::parse("$date $value", 'Asia/Manila');
     }
 }

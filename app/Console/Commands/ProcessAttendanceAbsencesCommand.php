@@ -32,19 +32,22 @@ class ProcessAttendanceAbsencesCommand extends Command
 
         $now = Carbon::now('Asia/Manila');
 
-        $this->info("ATTENDSYNC: Processing dynamic schedule attendance & absences for date: {$date}");
+        $dryRun = (bool) $this->option('dry-run');
+        $this->info("ATTENDSYNC: Processing dynamic schedule attendance & absences for date: {$date}".($dryRun ? ' (dry run)' : ''));
         $this->comment("Current server time (Asia/Manila): {$now->format('Y-m-d H:i:s T')}");
 
-        $stats = $ruleService->processAbsencesForDate($date, $now);
+        $stats = $ruleService->processAbsencesForDate($date, $now, $dryRun);
 
+        $absenceMetric = $dryRun ? 'Absence Records That Would Be Created' : 'Absence Records Created';
+        $updateMetric = $dryRun ? 'Attendance Records That Would Be Updated' : 'Attendance Records Updated';
         $this->table(
             ['Metric', 'Count / Details'],
             [
                 ['Target Date', $stats['date']],
                 ['Evaluated At', $stats['evaluated_at']],
                 ['Total Active Employees', $stats['total_active_employees']],
-                ['Absence Records Created', $stats['absences_created']],
-                ['Attendance Records Updated', $stats['records_updated']],
+                [$absenceMetric, $dryRun ? $stats['absences_would_be_created'] : $stats['absences_created']],
+                [$updateMetric, $dryRun ? $stats['records_would_be_updated'] : $stats['records_updated']],
                 ['Rest Days / Weekends Skipped', $stats['rest_days_skipped']],
                 ['Unconfigured Schedules Skipped', $stats['unconfigured_skipped']],
             ]
@@ -57,7 +60,9 @@ class ProcessAttendanceAbsencesCommand extends Command
             }
         }
 
-        $this->info("Attendance absence processing completed successfully.");
+        $this->info($dryRun
+            ? 'Attendance absence dry run completed; no database changes were saved.'
+            : 'Attendance absence processing completed successfully.');
 
         return Command::SUCCESS;
     }

@@ -28,4 +28,12 @@ class BiometricVerification extends Model
     {
         return $this->belongsTo(Employee::class);
     }
+
+    public function credential(): BelongsTo
+    {
+        return $this->belongsTo(
+            BiometricCredential::class,
+            'biometric_credential_id'
+        );
+    }
 }

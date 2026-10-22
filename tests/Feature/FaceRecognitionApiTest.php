@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Attendance;
+use App\Models\ApprovedDevice;
 use App\Models\BiometricCredential;
 use App\Models\BiometricVerification;
 use App\Models\Employee;
@@ -20,6 +21,8 @@ use Tests\TestCase;
 class FaceRecognitionApiTest extends TestCase
 {
     use RefreshDatabase;
+
+    private array $testDevices = [];
 
     private function createEmployeeUser(string $empId = 'E-101'): array
     {
@@ -63,8 +66,11 @@ class FaceRecognitionApiTest extends TestCase
 
     private function biometricVerificationToken(Employee $employee): string
     {
+        $device = $this->testDevice($employee);
         $credential = BiometricCredential::create([
             'employee_id' => $employee->id,
+            'approved_device_id' => $device['device']->id,
+            'verified_at' => now(),
             'credential_id' => (string) Str::uuid(),
             'verification_method' => 'fingerprint',
             'public_key_pem' => 'test-public-key',
@@ -145,6 +151,8 @@ class FaceRecognitionApiTest extends TestCase
             ->assertJsonPath('face.enrolled', true)
             ->assertJsonPath('face.model_version', 'dlib_face_recognition_v1')
             ->assertJsonPath('message', 'Face recognition enrolled successfully.');
+        $this->assertNull($response->json('face_verification_token'));
+        $this->assertDatabaseCount('face_verification_tokens', 0);
 
         $this->assertDatabaseHas('face_biometric_credentials', [
             'employee_id' => $employee->id,
@@ -203,7 +211,7 @@ class FaceRecognitionApiTest extends TestCase
             'distance' => 0.02,
             'confidence' => 0.98,
             'verified' => true,
-            'threshold' => 0.60,
+            'threshold' => 0.45,
         ]);
         $this->app->instance(FaceRecognitionService::class, $mockService);
 
@@ -225,6 +233,7 @@ class FaceRecognitionApiTest extends TestCase
 
         $this->assertDatabaseHas('face_verification_tokens', [
             'employee_id' => $employee->id,
+            'purpose' => 'attendance',
             'token_hash' => hash('sha256', $token),
             'used_at' => null,
         ]);
@@ -263,6 +272,126 @@ class FaceRecognitionApiTest extends TestCase
             ->assertJsonPath('confidence', 0.16);
 
         $this->assertDatabaseCount('face_verification_tokens', 0);
+    }
+
+    public function test_device_registration_rejects_face_outside_its_stricter_distance_cutoff(): void
+    {
+        [$user, $employee] = $this->createEmployeeUser('E-108-LOW-CONFIDENCE');
+        $identity = $this->testDevice($employee);
+
+        FaceBiometricCredential::create([
+            'employee_id' => $employee->id,
+            'face_template' => array_fill(0, 128, 0.01),
+            'model_version' => 'dlib_face_recognition_v1',
+            'verified_at' => now(),
+        ]);
+
+        $mockService = Mockery::mock(FaceRecognitionService::class);
+        $mockService->shouldReceive('validateImage')->once()->andReturnNull();
+        $mockService->shouldReceive('generateEmbedding')->once()->andReturn(array_fill(0, 128, 0.30));
+        $mockService->shouldReceive('verificationResult')
+            ->once()
+            ->withArgs(function (array $storedEmbedding, array $candidateEmbedding, float $threshold): bool {
+                return $storedEmbedding === array_fill(0, 128, 0.01)
+                    && $threshold === 0.45;
+            })
+            ->andReturn([
+                'distance' => 0.50,
+                'confidence' => 0.50,
+                'verified' => false,
+                'threshold' => 0.45,
+            ]);
+        $this->app->instance(FaceRecognitionService::class, $mockService);
+
+        $response = $this->actingAs($user, 'api')
+            ->withEmployeeDeviceProof($employee, 'POST', '/api/face/verify')
+            ->postJson('/api/face/verify', [
+                'face_image' => $this->validPngUpload('other-person.png'),
+                'purpose' => 'device_registration',
+                'device_uuid' => $identity['device_uuid'],
+                'public_key' => $identity['device']->public_key,
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('verified', false)
+            ->assertJsonPath('message', 'Face verification failed.')
+            ->assertJsonPath('confidence', 0.50)
+            ->assertJsonMissingPath('face_verification_token');
+
+        $this->assertDatabaseCount('face_verification_tokens', 0);
+    }
+
+    public function test_attendance_face_verification_rejects_a_face_outside_the_account_match_cutoff(): void
+    {
+        [$user, $employee] = $this->createEmployeeUser('E-108-ATTENDANCE-CUTOFF');
+
+        FaceBiometricCredential::create([
+            'employee_id' => $employee->id,
+            'face_template' => array_fill(0, 128, 0.01),
+            'model_version' => 'dlib_face_recognition_v1',
+            'verified_at' => now(),
+        ]);
+
+        $mockService = Mockery::mock(FaceRecognitionService::class);
+        $mockService->shouldReceive('validateImage')->once()->andReturnNull();
+        $mockService->shouldReceive('generateEmbedding')->once()->andReturn(array_fill(0, 128, 0.30));
+        $mockService->shouldReceive('verificationResult')
+            ->once()
+            ->withArgs(function (array $storedEmbedding, array $candidateEmbedding, float $threshold): bool {
+                return $storedEmbedding === array_fill(0, 128, 0.01)
+                    && $threshold === 0.45;
+            })
+            ->andReturn([
+                'distance' => 0.50,
+                'confidence' => 0.50,
+                'verified' => false,
+                'threshold' => 0.45,
+            ]);
+        $this->app->instance(FaceRecognitionService::class, $mockService);
+
+        $response = $this->actingAs($user, 'api')
+            ->postJson('/api/face/verify', [
+                'face_image' => $this->validPngUpload('different-employee-face.png'),
+                'purpose' => 'attendance',
+            ]);
+
+        $response->assertOk()
+            ->assertJsonPath('verified', false)
+            ->assertJsonPath('message', 'Face verification failed.')
+            ->assertJsonPath('confidence', 0.50)
+            ->assertJsonMissingPath('face_verification_token');
+
+        $this->assertDatabaseCount('face_verification_tokens', 0);
+    }
+
+    public function test_attendance_rejects_another_employees_face_verification_token(): void
+    {
+        [, $owner] = $this->createEmployeeUser('E-108-TOKEN-OWNER');
+        [$otherUser, $otherEmployee] = $this->createEmployeeUser('E-108-TOKEN-OTHER');
+        $faceToken = Str::random(64);
+
+        FaceVerificationToken::create([
+            'employee_id' => $owner->id,
+            'purpose' => 'attendance',
+            'token_hash' => hash('sha256', $faceToken),
+            'expires_at' => now()->addMinutes(2),
+        ]);
+
+        $response = $this->actingAs($otherUser, 'api')
+            ->postJson('/api/attendance/time-in', [
+                'verification_method' => 'face',
+                'face_verification_token' => $faceToken,
+                'photo' => $this->validPngUpload('other-account-token.png'),
+            ]);
+
+        $response->assertUnprocessable()
+            ->assertJsonValidationErrors('face_verification_token');
+        $this->assertDatabaseMissing('attendances', ['employee_id' => $otherEmployee->id]);
+        $this->assertDatabaseHas('face_verification_tokens', [
+            'employee_id' => $owner->id,
+            'token_hash' => hash('sha256', $faceToken),
+            'used_at' => null,
+        ]);
     }
 
     public function test_face_verification_token_is_consumed_by_attendance_time_in(): void
@@ -347,8 +476,12 @@ class FaceRecognitionApiTest extends TestCase
         [$user, $employee] = $this->createEmployeeUser('E-112');
         $biometricToken = $this->biometricVerificationToken($employee);
 
-        $response = $this->actingAs($user, 'api')
-            ->postJson('/api/attendance/time-in', [
+        $this->actingAs($user, 'api');
+        $response = $this->withEmployeeDeviceProof(
+            $employee,
+            'POST',
+            '/api/attendance/time-in'
+        )->postJson('/api/attendance/time-in', [
                 'biometric_verification_token' => $biometricToken,
                 'photo' => $this->validPngUpload('proof.png'),
             ]);
@@ -503,8 +636,12 @@ class FaceRecognitionApiTest extends TestCase
 
         $biometricToken = $this->biometricVerificationToken($employee);
 
-        $response = $this->actingAs($user, 'api')
-            ->postJson('/api/attendance/time-in', [
+        $this->actingAs($user, 'api');
+        $response = $this->withEmployeeDeviceProof(
+            $employee,
+            'POST',
+            '/api/attendance/time-in'
+        )->postJson('/api/attendance/time-in', [
                 'verification_method' => 'fingerprint',
                 'biometric_verification_token' => $biometricToken,
                 'photo' => $this->validPngUpload('fingerprint_proof.png'),
@@ -517,6 +654,77 @@ class FaceRecognitionApiTest extends TestCase
         $this->assertDatabaseHas('attendances', [
             'employee_id' => $employee->id,
             'time_in_verification_method' => 'fingerprint',
+        ]);
+    }
+
+    private function testDevice(Employee $employee): array
+    {
+        if (isset($this->testDevices[$employee->id])) {
+            return $this->testDevices[$employee->id];
+        }
+
+        $privateKey = openssl_pkey_new($this->opensslConfig([
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+            'private_key_bits' => 2048,
+        ]));
+        $this->assertNotFalse($privateKey);
+        openssl_pkey_export(
+            $privateKey,
+            $privateKeyPem,
+            null,
+            $this->opensslConfig()
+        );
+        $publicKey = openssl_pkey_get_details($privateKey)['key'];
+        $publicDer = base64_decode(
+            preg_replace('/-----[^-]+-----|\s+/', '', $publicKey),
+            true
+        );
+        $deviceUuid = 'AS-' . hash('sha256', $publicDer);
+        $device = ApprovedDevice::create([
+            'employee_id' => $employee->id,
+            'device_uuid' => $deviceUuid,
+            'device_name' => 'Test Android device',
+            'device_os' => 'Android',
+            'public_key' => $publicKey,
+            'status' => 'approved',
+            'registered_at' => now(),
+            'approved_at' => now(),
+        ]);
+
+        return $this->testDevices[$employee->id] = [
+            'device' => $device,
+            'device_uuid' => $deviceUuid,
+            'private_key' => $privateKeyPem,
+        ];
+    }
+
+    private function withEmployeeDeviceProof(
+        Employee $employee,
+        string $method,
+        string $uri
+    ): self {
+        $device = $this->testDevice($employee);
+        $timestamp = (string) now()->timestamp;
+        $nonce = bin2hex(random_bytes(32));
+        $message = implode("\n", [
+            'ATTENDSYNC-DEVICE-V1',
+            strtoupper($method),
+            $uri,
+            $timestamp,
+            $nonce,
+        ]);
+        openssl_sign(
+            $message,
+            $signature,
+            $device['private_key'],
+            OPENSSL_ALGO_SHA256
+        );
+
+        return $this->withHeaders([
+            'X-Device-Id' => $device['device_uuid'],
+            'X-Device-Timestamp' => $timestamp,
+            'X-Device-Nonce' => $nonce,
+            'X-Device-Signature' => base64_encode($signature),
         ]);
     }
 

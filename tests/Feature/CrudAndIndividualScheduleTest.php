@@ -201,6 +201,48 @@ class CrudAndIndividualScheduleTest extends TestCase
         $this->assertSoftDeleted('schedules', ['id' => $schedule->id]);
     }
 
+    public function test_work_schedule_rejects_malformed_times_and_work_days(): void
+    {
+        $admin = $this->createAdmin();
+
+        $this->actingAs($admin)
+            ->post(route('admin.schedules.store'), [
+                'name' => 'Malformed Shift',
+                'am_time_in' => 'not-a-time',
+                'am_time_out' => '12:00:00',
+                'pm_time_in' => '13:00:00',
+                'pm_time_out' => '17:00:00',
+                'work_days' => ['monday', 'not-a-day'],
+            ])
+            ->assertSessionHasErrors(['am_time_in', 'work_days.1']);
+
+        $this->assertDatabaseMissing('schedules', ['name' => 'Malformed Shift']);
+    }
+
+    public function test_dtr_rejects_invalid_month_and_employee_filters(): void
+    {
+        $admin = $this->createAdmin();
+
+        $this->actingAs($admin)
+            ->get(route('admin.reports.dtr', ['month' => '2026-13']))
+            ->assertSessionHasErrors('month');
+
+        $this->actingAs($admin)
+            ->followingRedirects()
+            ->withHeaders(['Referer' => route('admin.reports.dtr')])
+            ->get(route('admin.reports.dtr', ['month' => '2026-13']))
+            ->assertOk()
+            ->assertSee('CSC Form 48 (Daily Time Record)')
+            ->assertSee('Select a valid month in YYYY-MM format.');
+
+        $this->actingAs($admin)
+            ->get(route('admin.reports.dtr.print', [
+                'employee_id' => 'not-an-id',
+                'month' => 'October',
+            ]))
+            ->assertSessionHasErrors(['employee_id', 'month']);
+    }
+
     public function test_employee_crud_and_individual_schedule_independence(): void
     {
         $admin = $this->createAdmin();

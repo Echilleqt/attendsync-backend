@@ -70,62 +70,6 @@ class Attendance extends Model
             : substr((string) $value, 0, 10);
     }
 
-    public function setAmTimeInAttribute($value): void
-    {
-        $this->attributes['am_time_in'] = $value;
-        if (empty($this->attributes['time_in'])) {
-            $this->attributes['time_in'] = $value;
-        }
-    }
-
-    public function setPmTimeInAttribute($value): void
-    {
-        $this->attributes['pm_time_in'] = $value;
-        if (empty($this->attributes['time_in'])) {
-            $this->attributes['time_in'] = $value;
-        }
-    }
-
-    public function setPmTimeOutAttribute($value): void
-    {
-        $this->attributes['pm_time_out'] = $value;
-        $this->attributes['time_out'] = $value;
-    }
-
-    public function setTimeInAttribute($value): void
-    {
-        $this->attributes['time_in'] = $value;
-        if (!empty($value)) {
-            $carbon = \Carbon\Carbon::parse($value, 'Asia/Manila');
-            if ($carbon->format('H:i:s') < '12:00:00') {
-                if (empty($this->attributes['am_time_in'])) {
-                    $this->attributes['am_time_in'] = $value;
-                }
-            } else {
-                if (empty($this->attributes['pm_time_in'])) {
-                    $this->attributes['pm_time_in'] = $value;
-                }
-            }
-        }
-    }
-
-    public function setTimeOutAttribute($value): void
-    {
-        $this->attributes['time_out'] = $value;
-        if (!empty($value)) {
-            $carbon = \Carbon\Carbon::parse($value, 'Asia/Manila');
-            if ($carbon->format('H:i:s') < '12:00:00') {
-                if (empty($this->attributes['am_time_out'])) {
-                    $this->attributes['am_time_out'] = $value;
-                }
-            } else {
-                if (empty($this->attributes['pm_time_out'])) {
-                    $this->attributes['pm_time_out'] = $value;
-                }
-            }
-        }
-    }
-
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class);

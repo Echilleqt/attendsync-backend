@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ApprovedDevice;
 use App\Models\BiometricChallenge;
 use App\Models\BiometricCredential;
 use App\Models\BiometricVerification;
+use App\Services\DeviceProofService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -16,6 +18,11 @@ use Illuminate\Validation\ValidationException;
 
 class BiometricVerificationController extends Controller
 {
+    public function __construct(
+        protected DeviceProofService $deviceProofService
+    ) {
+    }
+
     public function enroll(Request $request): JsonResponse
     {
         $user = auth('api')->user();
@@ -27,6 +34,8 @@ class BiometricVerificationController extends Controller
                 'message' => 'An active employee account is required.',
             ], 403);
         }
+
+        $device = $this->requestDevice($request, $employee, true);
 
         $validated = $request->validate([
             'password' => ['required', 'string'],
@@ -90,6 +99,7 @@ class BiometricVerificationController extends Controller
 
         $credential = BiometricCredential::create([
             'employee_id' => $employee->id,
+            'approved_device_id' => $device->id,
             'credential_id' => (string) Str::uuid(),
             'verification_method' => $validated['verification_method'],
             'public_key_pem' => $validated['public_key_pem'],
@@ -108,7 +118,7 @@ class BiometricVerificationController extends Controller
         ], 201);
     }
 
-    public function status(): JsonResponse
+    public function status(Request $request): JsonResponse
     {
         $user = auth('api')->user();
         $employee = $user->employee;
@@ -120,10 +130,25 @@ class BiometricVerificationController extends Controller
             ], 404);
         }
 
-        $credentials = $employee->biometricCredentials()
+        $device = $this->requestDevice($request, $employee, false, true);
+        $fingerprintCredentials = $device?->isApproved()
+            ? $employee->biometricCredentials()
+                ->where('approved_device_id', $device->id)
+                ->where('verification_method', 'fingerprint')
+                ->whereNull('revoked_at')
+                ->whereNotNull('verified_at')
+                ->orderBy('created_at')
+                ->get([
+                    'credential_id',
+                    'verification_method',
+                    'device_name',
+                    'created_at',
+                ])
+            : collect();
+        $faceCredentials = $employee->biometricCredentials()
+            ->where('verification_method', 'face')
+            ->whereNull('revoked_at')
             ->whereNotNull('verified_at')
-            ->orderBy('verification_method')
-            ->orderBy('created_at')
             ->get([
                 'credential_id',
                 'verification_method',
@@ -133,24 +158,15 @@ class BiometricVerificationController extends Controller
 
         return response()->json([
             'success' => true,
+            'current_device_approved' => $device?->isApproved() ?? false,
             'methods' => [
                 'fingerprint' => [
-                    'enrolled' => $credentials->contains(
-                        'verification_method',
-                        'fingerprint'
-                    ),
-                    'credentials' => $credentials
-                        ->where('verification_method', 'fingerprint')
-                        ->values(),
+                    'enrolled' => $fingerprintCredentials->isNotEmpty(),
+                    'credentials' => $fingerprintCredentials,
                 ],
                 'face' => [
-                    'enrolled' => $credentials->contains(
-                        'verification_method',
-                        'face'
-                    ),
-                    'credentials' => $credentials
-                        ->where('verification_method', 'face')
-                        ->values(),
+                    'enrolled' => $faceCredentials->isNotEmpty(),
+                    'credentials' => $faceCredentials,
                 ],
             ],
         ]);
@@ -174,6 +190,8 @@ class BiometricVerificationController extends Controller
             ], 404);
         }
 
+        $device = $this->requestDevice($request, $employee, true);
+
         if (!Hash::check($validated['password'], $user->password)) {
             throw ValidationException::withMessages([
                 'password' => 'The password is incorrect.',
@@ -181,13 +199,18 @@ class BiometricVerificationController extends Controller
         }
 
         $credentials = $employee->biometricCredentials()
-            ->where('verification_method', $validated['verification_method']);
+            ->where('approved_device_id', $device->id)
+            ->where('verification_method', $validated['verification_method'])
+            ->whereNull('revoked_at');
 
         if (!empty($validated['credential_id'])) {
             $credentials->where('credential_id', $validated['credential_id']);
         }
 
-        $deleted = $credentials->delete();
+        $deleted = $credentials->update([
+            'revoked_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         if ($deleted === 0) {
             return response()->json([
@@ -234,8 +257,11 @@ class BiometricVerificationController extends Controller
             ], 403);
         }
 
+        $device = $this->requestDevice($request, $employee, true);
         $credentialQuery = BiometricCredential::query()
             ->where('employee_id', $employee->id)
+            ->where('approved_device_id', $device->id)
+            ->whereNull('revoked_at')
             ->where('credential_id', $validated['credential_id'])
             ->where(
                 'verification_method',
@@ -313,6 +339,8 @@ class BiometricVerificationController extends Controller
         ], 403);
     }
 
+    $device = $this->requestDevice($request, $employee, true);
+
     $signature = base64_decode($validated['signature'], true);
 
     if ($signature === false) {
@@ -326,6 +354,7 @@ class BiometricVerificationController extends Controller
             $validated,
             $user,
             $employee,
+            $device,
             $signature
         ): JsonResponse {
             $now = Carbon::now(config('app.timezone'));
@@ -334,6 +363,10 @@ class BiometricVerificationController extends Controller
                 ->with('credential')
                 ->whereKey($validated['challenge_id'])
                 ->where('employee_id', $employee->id)
+                ->whereHas('credential', function ($query) use ($device): void {
+                    $query->where('approved_device_id', $device->id)
+                        ->whereNull('revoked_at');
+                })
                 ->whereNull('consumed_at')
                 ->where('expires_at', '>', $now)
                 ->lockForUpdate()
@@ -409,6 +442,8 @@ class BiometricVerificationController extends Controller
 
             $credential = BiometricCredential::query()
                 ->whereKey($challenge->biometric_credential_id)
+                ->where('approved_device_id', $device->id)
+                ->whereNull('revoked_at')
                 ->lockForUpdate()
                 ->firstOrFail();
 
@@ -416,6 +451,17 @@ class BiometricVerificationController extends Controller
             $challenge->save();
 
             if ($challenge->purpose === 'biometric-enrollment') {
+                BiometricCredential::query()
+                    ->where('employee_id', $employee->id)
+                    ->where('approved_device_id', $device->id)
+                    ->where('verification_method', 'fingerprint')
+                    ->whereNull('revoked_at')
+                    ->where('id', '!=', $credential->id)
+                    ->update([
+                        'revoked_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
                 $credential->verified_at = $now;
                 $credential->save();
 
@@ -454,22 +500,68 @@ class BiometricVerificationController extends Controller
         }
     );
 } 
-private function signedMessage(
-    string $userId,
-    string $employeeId,
-    string $method,
-    string $challengeId,
-    string $nonce,
-    string $purpose
-): string {
-    return implode('|', [
-        'ATTENDSYNC',
-        $purpose,
-        $userId,
-        $employeeId,
-        $method,
-        $challengeId,
-        $nonce,
-    ]);
+
+    private function requestDevice(
+        Request $request,
+        \App\Models\Employee $employee,
+        bool $required,
+        bool $verifyProof = false
+    ): ?ApprovedDevice {
+    $deviceUuid = $request->header('X-Device-Id');
+    if (!$deviceUuid) {
+        if ($required) {
+            throw ValidationException::withMessages([
+                'device' => 'An approved device is required for fingerprint enrollment and verification.',
+            ]);
+        }
+
+        return null;
+    }
+
+    $device = ApprovedDevice::query()
+        ->where('employee_id', $employee->id)
+        ->where('device_uuid', $deviceUuid)
+        ->first();
+
+    if (!$device || !$device->public_key) {
+        if ($required) {
+            throw ValidationException::withMessages([
+                'device' => 'This approved device could not be verified.',
+            ]);
+        }
+
+        return null;
+    }
+
+    if ($verifyProof) {
+        $this->deviceProofService->assertValid($request, $device->public_key);
+    }
+
+    if ($required && !$device->isApproved()) {
+        throw ValidationException::withMessages([
+            'device' => 'Fingerprint enrollment and verification require an approved device.',
+        ]);
+    }
+
+    return $device;
 }
+
+    private function signedMessage(
+        string $userId,
+        string $employeeId,
+        string $method,
+        string $challengeId,
+        string $nonce,
+        string $purpose
+    ): string {
+        return implode('|', [
+            'ATTENDSYNC',
+            $purpose,
+            $userId,
+            $employeeId,
+            $method,
+            $challengeId,
+            $nonce,
+        ]);
+    }
 }

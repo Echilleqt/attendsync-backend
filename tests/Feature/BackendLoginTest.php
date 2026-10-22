@@ -28,6 +28,23 @@ class BackendLoginTest extends TestCase
         $this->assertGuest('web');
     }
 
+    public function test_employee_portal_renders_employee_branding_and_logout_action(): void
+    {
+        $employee = User::factory()->create([
+            'name' => 'Portal Employee',
+            'role' => 'employee',
+        ]);
+
+        $this->actingAs($employee)
+            ->get(route('employee.dashboard'))
+            ->assertOk()
+            ->assertSee('ATTENDSYNC')
+            ->assertSee('Bansud Central School')
+            ->assertSee('Welcome, Portal Employee!')
+            ->assertSee(route('logout'), false)
+            ->assertSee('Sign out');
+    }
+
     public function test_admin_can_log_in_to_the_backend(): void
     {
         $admin = User::factory()->create([

@@ -50,15 +50,60 @@ class FourEntryAttendanceAndDeviceTest extends TestCase
         return [$user, $employee];
     }
 
-    private function createFaceToken(Employee $employee): string
+    private function createFaceToken(
+        Employee $employee,
+        ?string $deviceUuid = null,
+        string $purpose = 'attendance',
+    ): string
     {
         $token = Str::random(64);
         FaceVerificationToken::create([
             'employee_id' => $employee->id,
+            'device_uuid' => $deviceUuid,
+            'purpose' => $purpose,
             'token_hash' => hash('sha256', $token),
             'expires_at' => now()->addMinutes(5),
         ]);
         return $token;
+    }
+
+    private function createDeviceIdentity(): array
+    {
+        $privateKey = openssl_pkey_new($this->opensslConfig([
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+            'private_key_bits' => 2048,
+        ]));
+        $this->assertNotFalse($privateKey);
+        openssl_pkey_export($privateKey, $privateKeyPem, null, $this->opensslConfig());
+        $publicKey = openssl_pkey_get_details($privateKey)['key'];
+        $der = base64_decode(preg_replace('/-----[^-]+-----|\s+/', '', $publicKey), true);
+
+        return [
+            'device_uuid' => 'AS-' . hash('sha256', $der),
+            'private_key' => $privateKeyPem,
+            'public_key' => $publicKey,
+        ];
+    }
+
+    private function deviceProofHeaders(array $identity, string $method, string $uri): array
+    {
+        $timestamp = (string) now()->timestamp;
+        $nonce = bin2hex(random_bytes(32));
+        $message = implode("\n", [
+            'ATTENDSYNC-DEVICE-V1',
+            strtoupper($method),
+            $uri,
+            $timestamp,
+            $nonce,
+        ]);
+        openssl_sign($message, $signature, $identity['private_key'], OPENSSL_ALGO_SHA256);
+
+        return [
+            'X-Device-Id' => $identity['device_uuid'],
+            'X-Device-Timestamp' => $timestamp,
+            'X-Device-Nonce' => $nonce,
+            'X-Device-Signature' => base64_encode($signature),
+        ];
     }
 
     /**
@@ -165,15 +210,17 @@ class FourEntryAttendanceAndDeviceTest extends TestCase
 
         // 2. Employee switches to Device B.
         // Device registration requires face verification using the existing registered template
-        $faceVerificationToken = $this->createFaceToken($employee);
+        $identity = $this->createDeviceIdentity();
+        $faceVerificationToken = $this->createFaceToken($employee, $identity['device_uuid'], 'device_registration');
 
         $regResponse = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'DEVICE-UUID-PH-002',
+            'device_uuid' => $identity['device_uuid'],
             'device_name' => 'Maria Pixel 8',
             'device_model' => 'Pixel 8',
             'device_os' => 'Android 14',
+            'public_key' => $identity['public_key'],
             'face_verification_token' => $faceVerificationToken,
-        ]);
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
 
         $regResponse->assertCreated()
             ->assertJsonPath('success', true)
@@ -186,13 +233,13 @@ class FourEntryAttendanceAndDeviceTest extends TestCase
         $this->assertEquals(1, FaceBiometricCredential::where('employee_id', $employee->id)->count());
 
         // 3. Employee attempts attendance submission on pending Device B -> MUST BE REJECTED
-        $attendanceToken = $this->createFaceToken($employee);
+        $attendanceToken = $this->createFaceToken($employee, $identity['device_uuid']);
         $pendingAttempt = $this->actingAs($user, 'api')->post('/api/attendance/morning-in', [
             'face_verification_token' => $attendanceToken,
             'photo' => UploadedFile::fake()->image('proof.jpg', 64, 64),
         ], [
             'Accept' => 'application/json',
-            'X-Device-Id' => 'DEVICE-UUID-PH-002',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
 
         $pendingAttempt->assertUnprocessable()
@@ -200,7 +247,7 @@ class FourEntryAttendanceAndDeviceTest extends TestCase
 
         // 4. Admin approves Device B
         $admin = User::factory()->create(['role' => 'admin']);
-        $device = ApprovedDevice::where('device_uuid', 'DEVICE-UUID-PH-002')->firstOrFail();
+        $device = ApprovedDevice::where('device_uuid', $identity['device_uuid'])->firstOrFail();
 
         $this->actingAs($admin, 'web')
             ->post(route('admin.devices.approve', $device))
@@ -209,13 +256,13 @@ class FourEntryAttendanceAndDeviceTest extends TestCase
         $this->assertTrue($device->fresh()->isApproved());
 
         // 5. Employee submits attendance from approved Device B -> MUST SUCCEED
-        $validToken = $this->createFaceToken($employee);
+        $validToken = $this->createFaceToken($employee, $identity['device_uuid']);
         $approvedAttempt = $this->actingAs($user, 'api')->post('/api/attendance/morning-in', [
             'face_verification_token' => $validToken,
             'photo' => UploadedFile::fake()->image('proof.jpg', 64, 64),
         ], [
             'Accept' => 'application/json',
-            'X-Device-Id' => 'DEVICE-UUID-PH-002',
+            ...$this->deviceProofHeaders($identity, 'POST', '/api/attendance/morning-in'),
         ]);
 
         $approvedAttempt->assertCreated()
@@ -228,13 +275,13 @@ class FourEntryAttendanceAndDeviceTest extends TestCase
 
         $this->assertEquals('revoked', $device->fresh()->status);
 
-        $newToken = $this->createFaceToken($employee);
+        $newToken = $this->createFaceToken($employee, $identity['device_uuid']);
         $revokedAttempt = $this->actingAs($user, 'api')->post('/api/attendance/morning-out', [
             'face_verification_token' => $newToken,
             'photo' => UploadedFile::fake()->image('proof2.jpg', 64, 64),
         ], [
             'Accept' => 'application/json',
-            'X-Device-Id' => 'DEVICE-UUID-PH-002',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
 
         $revokedAttempt->assertUnprocessable()

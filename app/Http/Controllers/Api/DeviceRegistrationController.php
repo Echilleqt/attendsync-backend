@@ -5,12 +5,17 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\ApprovedDevice;
 use App\Models\FaceVerificationToken;
+use App\Services\DeviceProofService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class DeviceRegistrationController extends Controller
 {
+    public function __construct(protected DeviceProofService $deviceProofService)
+    {
+    }
+
     /**
      * Register a new or existing device for an employee, requiring face verification.
      * The employee's existing face template is reused and preserved.
@@ -32,15 +37,23 @@ class DeviceRegistrationController extends Controller
             'device_name' => ['nullable', 'string', 'max:191'],
             'device_model' => ['nullable', 'string', 'max:191'],
             'device_os' => ['nullable', 'string', 'max:191'],
-            'public_key' => ['nullable', 'string', 'max:2048'],
+            'public_key' => ['required', 'string', 'max:4096'],
             'face_verification_token' => ['required', 'string', 'size:64'],
         ]);
+
+        if (($request->header('X-Device-Id') ?? '') !== $validated['device_uuid']) {
+            throw ValidationException::withMessages([
+                'device_uuid' => 'The device identity does not match this request.',
+            ]);
+        }
+        $this->deviceProofService->assertValid($request, $validated['public_key'], 'device_proof');
 
         $device = \Illuminate\Support\Facades\DB::transaction(function () use ($validated, $employee) {
             // Verify and atomically lock the single-use face verification token
             $tokenRecord = FaceVerificationToken::query()
                 ->where('token_hash', hash('sha256', $validated['face_verification_token']))
                 ->where('employee_id', $employee->id)
+                ->where('purpose', 'device_registration')
                 ->whereNull('used_at')
                 ->where('expires_at', '>', now())
                 ->lockForUpdate()
@@ -53,7 +66,7 @@ class DeviceRegistrationController extends Controller
             }
 
             // Ensure token is bound to the requesting device if device_uuid was recorded during verification
-            if ($tokenRecord->device_uuid && $tokenRecord->device_uuid !== $validated['device_uuid']) {
+            if (!$tokenRecord->device_uuid || $tokenRecord->device_uuid !== $validated['device_uuid']) {
                 throw ValidationException::withMessages([
                     'face_verification_token' => 'Face verification token was issued for a different device.',
                 ]);

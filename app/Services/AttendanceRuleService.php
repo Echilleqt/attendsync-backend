@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Attendance;
+use App\Models\AttendanceSetting;
 use App\Models\Employee;
 use App\Models\Schedule;
 use Carbon\Carbon;
@@ -59,9 +60,9 @@ class AttendanceRuleService
             }
 
             // Backward compatibility for legacy tests/records where schedules table is completely empty
-            $legacySetting = \App\Models\AttendanceSetting::where('effective_date', '<=', $targetDate)
+            $legacySetting = AttendanceSetting::where('effective_date', '<=', $targetDate)
                 ->orderByDesc('effective_date')
-                ->first() ?? \App\Models\AttendanceSetting::first();
+                ->first() ?? AttendanceSetting::first();
 
             $lateTime = $legacySetting?->late_starting_time
                 ? Carbon::parse($legacySetting->late_starting_time)->format('H:i:s')
@@ -89,7 +90,7 @@ class AttendanceRuleService
      */
     public function isScheduledWorkDay(?Schedule $schedule, Carbon|string $date): bool
     {
-        if (!$schedule) {
+        if (! $schedule) {
             return false;
         }
 
@@ -150,6 +151,13 @@ class AttendanceRuleService
         $now = $now ? $now->copy()->timezone('Asia/Manila') : Carbon::now('Asia/Manila');
         $times = $this->getScheduleTimes($schedule, $date);
 
+        if ($amIn && ! $this->isValidSessionArrival($amIn, $times['am_time_out'], $times['date'])) {
+            return 'incomplete';
+        }
+        if ($amOut && ! $this->isValidSessionDeparture($amOut, $amIn, $times['am_time_out'], $times['date'])) {
+            return 'incomplete';
+        }
+
         if ($amIn) {
             $amInManila = $amIn->copy()->timezone('Asia/Manila');
             $isLate = $times['late_cutoff_am'] !== null && $amInManila->format('H:i:s') > $times['late_cutoff_am']->format('H:i:s');
@@ -186,6 +194,24 @@ class AttendanceRuleService
     ): string {
         $now = $now ? $now->copy()->timezone('Asia/Manila') : Carbon::now('Asia/Manila');
         $times = $this->getScheduleTimes($schedule, $date);
+
+        if ($pmIn && ! $this->isValidSessionArrival(
+            $pmIn,
+            $times['pm_time_out'],
+            $times['date'],
+            $times['am_time_out']
+        )) {
+            return 'incomplete';
+        }
+        if ($pmOut && ! $this->isValidSessionDeparture(
+            $pmOut,
+            $pmIn,
+            $times['pm_time_out'],
+            $times['date'],
+            $times['am_time_out']
+        )) {
+            return 'incomplete';
+        }
 
         if ($pmIn) {
             $pmInManila = $pmIn->copy()->timezone('Asia/Manila');
@@ -237,10 +263,107 @@ class AttendanceRuleService
         }
 
         if ($amStatus === 'absent' && ($pmStatus === 'not_recorded' || empty($pmStatus))) {
-            return 'absent';
+            return 'incomplete';
         }
 
         return 'present';
+    }
+
+    public function isValidSessionArrival(
+        ?Carbon $arrival,
+        Carbon $sessionEnd,
+        Carbon|string $date,
+        ?Carbon $sessionStart = null
+    ): bool {
+        if (! $arrival) {
+            return false;
+        }
+
+        $arrival = $arrival->copy()->timezone('Asia/Manila');
+        $dateString = $date instanceof Carbon ? $date->toDateString() : substr((string) $date, 0, 10);
+
+        return $arrival->toDateString() === $dateString
+            && $arrival->lessThanOrEqualTo($sessionEnd)
+            && (! $sessionStart || $arrival->greaterThanOrEqualTo($sessionStart));
+    }
+
+    public function isValidSessionDeparture(
+        ?Carbon $departure,
+        ?Carbon $arrival,
+        Carbon $sessionEnd,
+        Carbon|string $date,
+        ?Carbon $sessionStart = null
+    ): bool {
+        if (
+            ! $departure
+            || ! $this->isValidSessionArrival($arrival, $sessionEnd, $date, $sessionStart)
+        ) {
+            return false;
+        }
+
+        $departure = $departure->copy()->timezone('Asia/Manila');
+        $arrival = $arrival->copy()->timezone('Asia/Manila');
+        $dateString = $date instanceof Carbon ? $date->toDateString() : substr((string) $date, 0, 10);
+
+        return $departure->toDateString() === $dateString
+            && $departure->greaterThan($arrival)
+            && $departure->lessThanOrEqualTo($sessionEnd)
+            && (! $sessionStart || $departure->greaterThanOrEqualTo($sessionStart));
+    }
+
+    public function isUndertimeFinalized(
+        Attendance $attendance,
+        Schedule $schedule,
+        Carbon|string $date
+    ): bool {
+        $times = $this->getScheduleTimes($schedule, $date);
+
+        if ($attendance->status === 'on_leave') {
+            return true;
+        }
+        if ($attendance->status === 'incomplete') {
+            return false;
+        }
+
+        foreach ([
+            [
+                'arrival' => $attendance->am_time_in,
+                'departure' => $attendance->am_time_out,
+                'start' => null,
+                'end' => $times['am_time_out'],
+            ],
+            [
+                'arrival' => $attendance->pm_time_in,
+                'departure' => $attendance->pm_time_out,
+                'start' => $times['am_time_out'],
+                'end' => $times['pm_time_out'],
+            ],
+        ] as $session) {
+            if ($session['arrival'] && ! $this->isValidSessionArrival(
+                $session['arrival'],
+                $session['end'],
+                $times['date'],
+                $session['start']
+            )) {
+                return false;
+            }
+
+            if ($session['departure'] && ! $this->isValidSessionDeparture(
+                $session['departure'],
+                $session['arrival'],
+                $session['end'],
+                $times['date'],
+                $session['start']
+            )) {
+                return false;
+            }
+
+            if ($session['arrival'] && ! $session['departure']) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -248,22 +371,48 @@ class AttendanceRuleService
      */
     public function calculateUndertime(Attendance $attendance, Schedule $schedule, Carbon|string $date): int
     {
+        if (! $this->isUndertimeFinalized($attendance, $schedule, $date)) {
+            return 0;
+        }
+
         $times = $this->getScheduleTimes($schedule, $date);
         $totalMinutes = 0;
 
         // Morning early departure
-        if ($attendance->am_time_out) {
+        if ($attendance->am_time_out && $attendance->am_time_in) {
             $amOut = $attendance->am_time_out->copy()->timezone('Asia/Manila');
-            if ($amOut->lessThan($times['am_time_out'])) {
-                $totalMinutes += $amOut->diffInMinutes($times['am_time_out']);
+            $amIn = $attendance->am_time_in->copy()->timezone('Asia/Manila');
+            if (
+                $amIn->toDateString() === $times['date']
+                && $amOut->toDateString() === $times['date']
+                && $amIn->greaterThanOrEqualTo($times['am_time_in'])
+                && $amIn->lessThanOrEqualTo($times['am_time_out'])
+                && $amOut->greaterThan($amIn)
+                && $amOut->lessThanOrEqualTo($times['am_time_out'])
+                && $amOut->lessThan($times['am_time_out'])
+            ) {
+                $totalMinutes += $amOut->copy()->startOfMinute()->diffInMinutes(
+                    $times['am_time_out']->copy()->startOfMinute()
+                );
             }
         }
 
         // Afternoon early departure
-        if ($attendance->pm_time_out) {
+        if ($attendance->pm_time_out && $attendance->pm_time_in) {
             $pmOut = $attendance->pm_time_out->copy()->timezone('Asia/Manila');
-            if ($pmOut->lessThan($times['pm_time_out'])) {
-                $totalMinutes += $pmOut->diffInMinutes($times['pm_time_out']);
+            $pmIn = $attendance->pm_time_in->copy()->timezone('Asia/Manila');
+            if (
+                $pmIn->toDateString() === $times['date']
+                && $pmOut->toDateString() === $times['date']
+                && $pmIn->greaterThanOrEqualTo($times['pm_time_in'])
+                && $pmIn->lessThanOrEqualTo($times['pm_time_out'])
+                && $pmOut->greaterThan($pmIn)
+                && $pmOut->lessThanOrEqualTo($times['pm_time_out'])
+                && $pmOut->lessThan($times['pm_time_out'])
+            ) {
+                $totalMinutes += $pmOut->copy()->startOfMinute()->diffInMinutes(
+                    $times['pm_time_out']->copy()->startOfMinute()
+                );
             }
         }
 
@@ -279,7 +428,7 @@ class AttendanceRuleService
         $date = $attendance->attendance_date;
         $schedule ??= $attendance->schedule ?? ($employee ? $this->resolveScheduleForEmployeeAndDate($employee, $date) : null);
 
-        if (!$schedule) {
+        if (! $schedule) {
             return $attendance;
         }
 
@@ -289,13 +438,14 @@ class AttendanceRuleService
         if ($attendance->status === 'on_leave') {
             $attendance->am_status = 'on_leave';
             $attendance->pm_status = 'on_leave';
+
             return $attendance;
         }
 
-        $amIn = $attendance->am_time_in ?? $attendance->time_in;
+        $amIn = $attendance->am_time_in;
         $amOut = $attendance->am_time_out;
         $pmIn = $attendance->pm_time_in;
-        $pmOut = $attendance->pm_time_out ?? ($attendance->am_time_out ? $attendance->time_out : null);
+        $pmOut = $attendance->pm_time_out;
 
         $amStatus = $this->evaluateAmStatus($amIn, $amOut, $schedule, $date, $now);
         $pmStatus = $this->evaluatePmStatus($pmIn, $pmOut, $schedule, $date, $now);
@@ -303,7 +453,9 @@ class AttendanceRuleService
         $attendance->am_status = $amStatus;
         $attendance->pm_status = $pmStatus;
         $attendance->status = $this->computeOverallStatus($amStatus, $pmStatus);
-        $attendance->undertime_minutes = $this->calculateUndertime($attendance, $schedule, $date);
+        $attendance->undertime_minutes = $attendance->status === 'incomplete'
+            ? 0
+            : $this->calculateUndertime($attendance, $schedule, $date);
 
         return $attendance;
     }
@@ -314,7 +466,7 @@ class AttendanceRuleService
      * Evaluates unrecorded sessions, marks absences, marks incomplete sessions when Time Out is missing,
      * respects leaves/holidays/rest days, is idempotent, and preserves historical data.
      */
-    public function processAbsencesForDate(Carbon|string $date, ?Carbon $now = null): array
+    public function processAbsencesForDate(Carbon|string $date, ?Carbon $now = null, bool $dryRun = false): array
     {
         $dateCarbon = $date instanceof Carbon ? $date->copy()->timezone('Asia/Manila') : Carbon::parse($date, 'Asia/Manila');
         $dateString = $dateCarbon->toDateString();
@@ -323,9 +475,12 @@ class AttendanceRuleService
         $stats = [
             'date' => $dateString,
             'evaluated_at' => $now->toIso8601String(),
+            'dry_run' => $dryRun,
             'total_active_employees' => 0,
             'absences_created' => 0,
+            'absences_would_be_created' => 0,
             'records_updated' => 0,
+            'records_would_be_updated' => 0,
             'unconfigured_skipped' => 0,
             'rest_days_skipped' => 0,
             'unconfigured_employees' => [],
@@ -339,11 +494,11 @@ class AttendanceRuleService
         $stats['total_active_employees'] = $employees->count();
 
         foreach ($employees as $employee) {
-            DB::transaction(function () use ($employee, $dateCarbon, $dateString, $now, &$stats) {
+            DB::transaction(function () use ($employee, $dateCarbon, $dateString, $now, $dryRun, &$stats) {
                 $schedule = $this->resolveScheduleForEmployeeAndDate($employee, $dateCarbon);
 
                 // Handle missing schedule configuration explicitly
-                if (!$schedule) {
+                if (! $schedule) {
                     $stats['unconfigured_skipped']++;
                     $stats['unconfigured_employees'][] = [
                         'id' => $employee->id,
@@ -351,12 +506,14 @@ class AttendanceRuleService
                         'name' => $employee->full_name,
                     ];
                     Log::warning("ATTENDSYNC: Employee #{$employee->id} ({$employee->full_name}) has no valid work schedule assigned for {$dateString}. Absence evaluation skipped.");
+
                     return;
                 }
 
                 // Check if scheduled work day (skip rest days / weekends)
-                if (!$this->isScheduledWorkDay($schedule, $dateCarbon)) {
+                if (! $this->isScheduledWorkDay($schedule, $dateCarbon)) {
                     $stats['rest_days_skipped']++;
+
                     return;
                 }
 
@@ -376,11 +533,11 @@ class AttendanceRuleService
                 $amAbsenceDue = $now->greaterThanOrEqualTo($times['am_absence_deadline']);
                 $pmAbsenceDue = $now->greaterThanOrEqualTo($times['pm_absence_deadline']);
 
-                if (!$attendance) {
+                if (! $attendance) {
                     // No attendance record exists for this employee today
                     if ($amAbsenceDue && $pmAbsenceDue) {
                         // Both morning and afternoon sessions missed
-                        Attendance::create([
+                        $attributes = [
                             'employee_id' => $employee->id,
                             'schedule_id' => $schedule->id,
                             'attendance_date' => $dateString,
@@ -389,50 +546,70 @@ class AttendanceRuleService
                             'pm_status' => 'absent',
                             'undertime_minutes' => 0,
                             'late_starting_time_snapshot' => $times['late_cutoff_am']?->format('H:i:s'),
-                        ]);
-                        $stats['absences_created']++;
+                        ];
+                        if ($dryRun) {
+                            $stats['absences_would_be_created']++;
+                        } else {
+                            Attendance::create($attributes);
+                            $stats['absences_created']++;
+                        }
                     } elseif ($amAbsenceDue) {
                         // Morning session deadline passed, afternoon still pending
-                        Attendance::create([
+                        $attributes = [
                             'employee_id' => $employee->id,
                             'schedule_id' => $schedule->id,
                             'attendance_date' => $dateString,
-                            'status' => 'absent',
+                            'status' => 'incomplete',
                             'am_status' => 'absent',
                             'pm_status' => null,
                             'undertime_minutes' => 0,
                             'late_starting_time_snapshot' => $times['late_cutoff_am']?->format('H:i:s'),
-                        ]);
-                        $stats['absences_created']++;
+                        ];
+                        if ($dryRun) {
+                            $stats['absences_would_be_created']++;
+                        } else {
+                            Attendance::create($attributes);
+                            $stats['absences_created']++;
+                        }
                     }
                 } else {
                     // An attendance record already exists. Synchronize session statuses safely without overwriting timestamps.
                     $attendance->schedule_id ??= $schedule->id;
 
-                    $amIn = $attendance->am_time_in ?? $attendance->time_in;
+                    $amIn = $attendance->am_time_in;
                     $amOut = $attendance->am_time_out;
                     $pmIn = $attendance->pm_time_in;
-                    $pmOut = $attendance->pm_time_out ?? ($attendance->am_time_out ? $attendance->time_out : null);
+                    $pmOut = $attendance->pm_time_out;
 
                     $origAmStatus = $attendance->am_status;
                     $origPmStatus = $attendance->pm_status;
                     $origStatus = $attendance->status;
+                    $origScheduleId = $attendance->schedule_id;
+                    $origUndertime = $attendance->undertime_minutes;
 
                     $newAmStatus = $this->evaluateAmStatus($amIn, $amOut, $schedule, $dateCarbon, $now);
                     $newPmStatus = $this->evaluatePmStatus($pmIn, $pmOut, $schedule, $dateCarbon, $now);
                     $newOverallStatus = $this->computeOverallStatus($newAmStatus, $newPmStatus);
+                    $newUndertime = $this->calculateUndertime($attendance, $schedule, $dateCarbon);
 
                     if (
                         $origAmStatus !== $newAmStatus ||
                         $origPmStatus !== $newPmStatus ||
-                        $origStatus !== $newOverallStatus
+                        $origStatus !== $newOverallStatus ||
+                        $origScheduleId !== $schedule->id ||
+                        $origUndertime !== $newUndertime
                     ) {
                         $attendance->am_status = $newAmStatus;
                         $attendance->pm_status = $newPmStatus;
                         $attendance->status = $newOverallStatus;
-                        $attendance->undertime_minutes = $this->calculateUndertime($attendance, $schedule, $dateCarbon);
-                        $attendance->save();
-                        $stats['records_updated']++;
+                        $attendance->schedule_id = $schedule->id;
+                        $attendance->undertime_minutes = $newOverallStatus === 'incomplete' ? 0 : $newUndertime;
+                        if ($dryRun) {
+                            $stats['records_would_be_updated']++;
+                        } else {
+                            $attendance->save();
+                            $stats['records_updated']++;
+                        }
                     }
                 }
             });

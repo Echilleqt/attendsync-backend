@@ -12,7 +12,22 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
     <link rel="icon" type="image/png" href="{{ asset('images/attendsync.png') }}?v=20261003">
-    <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=20261003-circle">
+    <link rel="stylesheet" href="{{ asset('css/app.css') }}?v=admin-redesign-7">
+    <style>
+        .validation-errors {
+            background: #fff1f2;
+            border: 1px solid #fecdd3;
+            border-radius: 8px;
+            color: #9f1239;
+            margin-bottom: 20px;
+            padding: 14px 18px;
+        }
+
+        .validation-errors ul {
+            margin: 8px 0 0;
+            padding-left: 20px;
+        }
+    </style>
 </head>
 
 <body>
@@ -26,6 +41,17 @@
             @include('components.admin.topbar')
 
             <div class="page-content">
+                @if ($errors->any())
+                    <div class="validation-errors" role="alert" aria-live="assertive">
+                        <strong>Please check the information you entered:</strong>
+                        <ul>
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
                 @yield('content')
             </div>
         </main>

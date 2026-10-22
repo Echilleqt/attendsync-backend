@@ -45,16 +45,61 @@ class SecureDeviceRegistrationTest extends TestCase
         return [$user, $employee];
     }
 
-    private function createFaceToken(Employee $employee, ?string $deviceUuid = null, int $validMinutes = 5): string
+    private function createFaceToken(
+        Employee $employee,
+        ?string $deviceUuid = null,
+        int $validMinutes = 5,
+        string $purpose = 'attendance',
+    ): string
     {
         $token = Str::random(64);
         FaceVerificationToken::create([
             'employee_id' => $employee->id,
             'device_uuid' => $deviceUuid,
+            'purpose' => $purpose,
             'token_hash' => hash('sha256', $token),
             'expires_at' => now()->addMinutes($validMinutes),
         ]);
         return $token;
+    }
+
+    private function createDeviceIdentity(): array
+    {
+        $privateKey = openssl_pkey_new($this->opensslConfig([
+            'private_key_type' => OPENSSL_KEYTYPE_RSA,
+            'private_key_bits' => 2048,
+        ]));
+        $this->assertNotFalse($privateKey);
+        openssl_pkey_export($privateKey, $privateKeyPem, null, $this->opensslConfig());
+        $publicKey = openssl_pkey_get_details($privateKey)['key'];
+        $der = base64_decode(preg_replace('/-----[^-]+-----|\s+/', '', $publicKey), true);
+
+        return [
+            'device_uuid' => 'AS-' . hash('sha256', $der),
+            'private_key' => $privateKeyPem,
+            'public_key' => $publicKey,
+        ];
+    }
+
+    private function deviceProofHeaders(array $identity, string $method, string $uri): array
+    {
+        $timestamp = (string) now()->timestamp;
+        $nonce = bin2hex(random_bytes(32));
+        $message = implode("\n", [
+            'ATTENDSYNC-DEVICE-V1',
+            strtoupper($method),
+            $uri,
+            $timestamp,
+            $nonce,
+        ]);
+        openssl_sign($message, $signature, $identity['private_key'], OPENSSL_ALGO_SHA256);
+
+        return [
+            'X-Device-Id' => $identity['device_uuid'],
+            'X-Device-Timestamp' => $timestamp,
+            'X-Device-Nonce' => $nonce,
+            'X-Device-Signature' => base64_encode($signature),
+        ];
     }
 
     public function test_device_status_endpoint_returns_unregistered_when_no_record(): void
@@ -70,43 +115,65 @@ class SecureDeviceRegistrationTest extends TestCase
             ->assertJsonPath('is_approved', false);
     }
 
+    public function test_device_registration_face_token_cannot_authorize_attendance(): void
+    {
+        [$user, $employee] = $this->createEmployeeUser();
+        $token = $this->createFaceToken($employee, null, 5, 'device_registration');
+
+        $this->actingAs($user, 'api')->post('/api/attendance/time-in', [
+            'verification_method' => 'face',
+            'face_verification_token' => $token,
+            'photo' => UploadedFile::fake()->image('face-token-misuse.jpg', 64, 64),
+        ], ['Accept' => 'application/json'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('face_verification_token');
+    }
+
     public function test_device_registration_requires_valid_face_token_and_binds_device(): void
     {
         [$user, $employee] = $this->createEmployeeUser();
-
-        // 1. Invalid face verification token fails
-        $invalidRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'NEW-DEVICE-999',
+        $identity = $this->createDeviceIdentity();
+        $payload = [
+            'device_uuid' => $identity['device_uuid'],
             'device_name' => 'Test Phone',
             'device_model' => 'Pixel 8a',
             'device_os' => 'Android 14',
+            'public_key' => $identity['public_key'],
+        ];
+
+        // 1. Invalid face verification token fails
+        $invalidRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
+            ...$payload,
             'face_verification_token' => Str::random(64),
-        ]);
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
         $invalidRes->assertUnprocessable()
             ->assertJsonValidationErrors('face_verification_token');
 
         // 2. Token issued for a DIFFERENT device fails
-        $diffDeviceToken = $this->createFaceToken($employee, 'OTHER-DEVICE-111');
+        $diffDeviceToken = $this->createFaceToken($employee, 'OTHER-DEVICE-111', 5, 'device_registration');
         $diffRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'NEW-DEVICE-999',
-            'device_name' => 'Test Phone',
-            'device_model' => 'Pixel 8a',
-            'device_os' => 'Android 14',
+            ...$payload,
             'face_verification_token' => $diffDeviceToken,
-        ]);
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
         $diffRes->assertUnprocessable()
             ->assertJsonValidationErrors('face_verification_token');
 
-        // 3. Valid token succeeds and is consumed atomically
-        $validToken = $this->createFaceToken($employee, 'NEW-DEVICE-999');
+        // Attendance-purpose tokens cannot be used to register a device
+        $attendanceToken = $this->createFaceToken($employee, $identity['device_uuid']);
+        $wrongPurposeRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
+            ...$payload,
+            'face_verification_token' => $attendanceToken,
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
+        $wrongPurposeRes->assertUnprocessable()
+            ->assertJsonValidationErrors('face_verification_token');
+
+        // 3. Registration-purpose token succeeds and is consumed atomically
+        $validToken = $this->createFaceToken($employee, $identity['device_uuid'], 5, 'device_registration');
         $successRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'NEW-DEVICE-999',
+            ...$payload,
             'device_name' => 'Juan Phone',
-            'device_model' => 'Pixel 8a',
-            'device_os' => 'Android 14',
-            'public_key' => 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...',
             'face_verification_token' => $validToken,
-        ]);
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
 
         $successRes->assertCreated()
             ->assertJsonPath('success', true)
@@ -115,12 +182,9 @@ class SecureDeviceRegistrationTest extends TestCase
 
         // Verify token cannot be reused
         $reuseRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'NEW-DEVICE-999',
-            'device_name' => 'Juan Phone',
-            'device_model' => 'Pixel 8a',
-            'device_os' => 'Android 14',
+            ...$payload,
             'face_verification_token' => $validToken,
-        ]);
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
         $reuseRes->assertUnprocessable()
             ->assertJsonValidationErrors('face_verification_token');
     }
@@ -141,18 +205,22 @@ class SecureDeviceRegistrationTest extends TestCase
         $originalHash = md5(json_encode($credential->face_template));
 
         // Register Device 1
-        $token1 = $this->createFaceToken($employee, 'DEVICE-ONE');
+        $identityOne = $this->createDeviceIdentity();
+        $token1 = $this->createFaceToken($employee, $identityOne['device_uuid'], 5, 'device_registration');
         $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'DEVICE-ONE',
+            'device_uuid' => $identityOne['device_uuid'],
+            'public_key' => $identityOne['public_key'],
             'face_verification_token' => $token1,
-        ])->assertCreated();
+        ], $this->deviceProofHeaders($identityOne, 'POST', '/api/devices/register'))->assertCreated();
 
         // Register Device 2 (e.g. employee changed phones)
-        $token2 = $this->createFaceToken($employee, 'DEVICE-TWO');
+        $identityTwo = $this->createDeviceIdentity();
+        $token2 = $this->createFaceToken($employee, $identityTwo['device_uuid'], 5, 'device_registration');
         $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'DEVICE-TWO',
+            'device_uuid' => $identityTwo['device_uuid'],
+            'public_key' => $identityTwo['public_key'],
             'face_verification_token' => $token2,
-        ])->assertCreated();
+        ], $this->deviceProofHeaders($identityTwo, 'POST', '/api/devices/register'))->assertCreated();
 
         // Assert face template was preserved and never overwritten or duplicated
         $credential->refresh();
@@ -164,6 +232,7 @@ class SecureDeviceRegistrationTest extends TestCase
     public function test_backend_enforces_device_approval_on_protected_endpoints(): void
     {
         [$user, $employee] = $this->createEmployeeUser();
+        $identity = $this->createDeviceIdentity();
 
         // 1. Unregistered device calling protected attendance endpoint
         $unregRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
@@ -175,7 +244,8 @@ class SecureDeviceRegistrationTest extends TestCase
         // 2. Pending device calling protected endpoint
         $device = ApprovedDevice::create([
             'employee_id' => $employee->id,
-            'device_uuid' => 'PENDING-DEVICE-001',
+            'device_uuid' => $identity['device_uuid'],
+            'public_key' => $identity['public_key'],
             'device_model' => 'Galaxy S23',
             'status' => 'pending',
             'verified_via_face' => true,
@@ -183,14 +253,14 @@ class SecureDeviceRegistrationTest extends TestCase
         ]);
 
         $pendingRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
-            'X-Device-Id' => 'PENDING-DEVICE-001',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
         $pendingRes->assertUnprocessable()
             ->assertJsonValidationErrors('device');
 
         // Correction request blocked while pending
         $pendingCorrection = $this->actingAs($user, 'api')->getJson('/api/attendance-correction-requests', [
-            'X-Device-Id' => 'PENDING-DEVICE-001',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
         $pendingCorrection->assertUnprocessable()
             ->assertJsonValidationErrors('device');
@@ -204,10 +274,21 @@ class SecureDeviceRegistrationTest extends TestCase
         $this->assertTrue($device->fresh()->isApproved());
 
         // 4. Approved device gains access
-        $approvedRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
-            'X-Device-Id' => 'PENDING-DEVICE-001',
-        ]);
+        $approvedHeaders = $this->deviceProofHeaders($identity, 'GET', '/api/attendance/today');
+        $approvedRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', $approvedHeaders);
         $approvedRes->assertOk();
+
+        $this->actingAs($user, 'api')
+            ->getJson('/api/attendance/today', $approvedHeaders)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('device');
+
+        $invalidHeaders = $this->deviceProofHeaders($identity, 'GET', '/api/attendance/today');
+        $invalidHeaders['X-Device-Signature'] = base64_encode('invalid-signature');
+        $this->actingAs($user, 'api')
+            ->getJson('/api/attendance/today', $invalidHeaders)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('device');
 
         // 5. Admin rejects device
         $this->actingAs($admin, 'web')
@@ -221,7 +302,7 @@ class SecureDeviceRegistrationTest extends TestCase
 
         // 6. Rejected device is blocked
         $rejectedRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
-            'X-Device-Id' => 'PENDING-DEVICE-001',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
         $rejectedRes->assertUnprocessable()
             ->assertJsonValidationErrors('device');
@@ -236,7 +317,7 @@ class SecureDeviceRegistrationTest extends TestCase
         $this->assertEquals('revoked', $device->fresh()->status);
 
         $revokedRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
-            'X-Device-Id' => 'PENDING-DEVICE-001',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
         $revokedRes->assertUnprocessable()
             ->assertJsonValidationErrors('device');
@@ -275,6 +356,7 @@ class SecureDeviceRegistrationTest extends TestCase
     public function test_new_provisioned_employee_can_enroll_face_directly_and_register_pending_device(): void
     {
         [$user, $employee] = $this->createEmployeeUser();
+        $identity = $this->createDeviceIdentity();
 
         // 1. Check initial face status is not enrolled
         $statusRes = $this->actingAs($user, 'api')->getJson('/api/face/status');
@@ -283,25 +365,28 @@ class SecureDeviceRegistrationTest extends TestCase
 
         // 2. Active employee directly enrolls face with liveness image
         $mockService = \Mockery::mock(\App\Services\FaceRecognitionService::class);
-        $mockService->shouldReceive('validateImage')->once()->andReturnNull();
-        $mockService->shouldReceive('generateEmbedding')->once()->andReturn(array_fill(0, 128, 0.123));
+        $mockService->shouldReceive('validateImage')->twice()->andReturnNull();
+        $mockService->shouldReceive('generateEmbedding')->twice()->andReturn(array_fill(0, 128, 0.123));
         $mockService->shouldReceive('getModelVersion')->andReturn('dlib_face_recognition_v1');
+        $mockService->shouldReceive('verificationResult')->once()->andReturn([
+            'distance' => 0.02,
+            'confidence' => 0.98,
+            'verified' => true,
+            'threshold' => 0.60,
+        ]);
         $this->app->instance(\App\Services\FaceRecognitionService::class, $mockService);
 
         $file = UploadedFile::fake()->image('enroll.jpg', 128, 128);
 
         $enrollRes = $this->actingAs($user, 'api')->postJson('/api/face/enroll', [
             'face_image' => $file,
-            'device_uuid' => 'NEW-EMPLOYEE-PHONE-001',
         ]);
 
         $enrollRes->assertCreated()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('face.enrolled', true)
-            ->assertJsonStructure(['face_verification_token']);
-
-        $token = $enrollRes->json('face_verification_token');
-        $this->assertNotEmpty($token);
+            ->assertJsonPath('face.enrolled', true);
+        $this->assertNull($enrollRes->json('face_verification_token'));
+        $this->assertDatabaseCount('face_verification_tokens', 0);
 
         // Template is bound to employee
         $this->assertDatabaseHas('face_biometric_credentials', [
@@ -309,38 +394,56 @@ class SecureDeviceRegistrationTest extends TestCase
             'model_version' => 'dlib_face_recognition_v1',
         ]);
 
-        // 3. Submit device registration with the issued token
+        // 3. Match the newly enrolled template to obtain a purpose-bound registration token
+        $verifyRes = $this->actingAs($user, 'api')->postJson('/api/face/verify', [
+            'face_image' => UploadedFile::fake()->image('verify.jpg', 128, 128),
+            'purpose' => 'device_registration',
+            'device_uuid' => $identity['device_uuid'],
+            'public_key' => $identity['public_key'],
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/face/verify'));
+        $verifyRes->assertOk()->assertJsonPath('verified', true);
+        $token = $verifyRes->json('face_verification_token');
+        $this->assertDatabaseHas('face_verification_tokens', [
+            'employee_id' => $employee->id,
+            'device_uuid' => $identity['device_uuid'],
+            'purpose' => 'device_registration',
+            'token_hash' => hash('sha256', $token),
+        ]);
+
+        // 4. Submit registration with both the matching face token and device-key proof
         $regRes = $this->actingAs($user, 'api')->postJson('/api/devices/register', [
-            'device_uuid' => 'NEW-EMPLOYEE-PHONE-001',
+            'device_uuid' => $identity['device_uuid'],
             'device_name' => 'New Teacher Phone',
             'device_model' => 'Samsung A54',
             'device_os' => 'Android 14',
+            'public_key' => $identity['public_key'],
             'face_verification_token' => $token,
-        ]);
+        ], $this->deviceProofHeaders($identity, 'POST', '/api/devices/register'));
 
         $regRes->assertCreated()
             ->assertJsonPath('success', true)
             ->assertJsonPath('device.status', 'pending')
             ->assertJsonPath('device.verified_via_face', true);
 
-        // 4. Device is pending approval; protected features remain blocked
+        // 5. Device is pending approval; protected features remain blocked
         $blockedRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
-            'X-Device-Id' => 'NEW-EMPLOYEE-PHONE-001',
+            'X-Device-Id' => $identity['device_uuid'],
         ]);
         $blockedRes->assertUnprocessable()
             ->assertJsonValidationErrors('device');
 
-        // 5. Admin approves device
+        // 6. Admin approves device
         $admin = User::factory()->create(['role' => 'admin']);
-        $device = ApprovedDevice::where('device_uuid', 'NEW-EMPLOYEE-PHONE-001')->firstOrFail();
+        $device = ApprovedDevice::where('device_uuid', $identity['device_uuid'])->firstOrFail();
         $this->actingAs($admin, 'web')->post(route('admin.devices.approve', $device));
 
         $this->assertTrue($device->fresh()->isApproved());
 
-        // 6. Protected features now accessible
-        $allowedRes = $this->actingAs($user, 'api')->getJson('/api/attendance/today', [
-            'X-Device-Id' => 'NEW-EMPLOYEE-PHONE-001',
-        ]);
+        // 7. Protected features require a fresh proof from the approved device key
+        $allowedRes = $this->actingAs($user, 'api')->getJson(
+            '/api/attendance/today',
+            $this->deviceProofHeaders($identity, 'GET', '/api/attendance/today'),
+        );
         $allowedRes->assertOk();
     }
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\FaceBiometricCredential;
 use App\Models\FaceVerificationToken;
+use App\Services\DeviceProofService;
 use App\Services\FaceRecognitionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -15,8 +16,10 @@ use RuntimeException;
 
 class FaceRecognitionController extends Controller
 {
-    public function __construct(protected FaceRecognitionService $faceRecognitionService)
-    {
+    public function __construct(
+        protected FaceRecognitionService $faceRecognitionService,
+        protected DeviceProofService $deviceProofService,
+    ) {
     }
 
     public function status(): JsonResponse
@@ -96,23 +99,9 @@ class FaceRecognitionController extends Controller
             ]
         );
 
-        // Issue a single-use token bound to this device for device registration
-        $deviceUuid = $request->input('device_uuid') ?? $request->header('X-Device-Id');
-        $token = Str::random(64);
-        $expiresAt = now()->addMinutes((int) config('face-recognition.verification_ttl_minutes', 5));
-
-        FaceVerificationToken::query()->create([
-            'employee_id' => $employee->id,
-            'device_uuid' => $deviceUuid,
-            'token_hash' => hash('sha256', $token),
-            'expires_at' => $expiresAt,
-        ]);
-
         return response()->json([
             'success' => true,
             'message' => 'Face recognition enrolled successfully.',
-            'face_verification_token' => $token,
-            'expires_at' => $expiresAt->toIso8601String(),
             'face' => [
                 'enrolled' => true,
                 'verified_at' => $credential->verified_at?->toIso8601String(),
@@ -131,6 +120,23 @@ class FaceRecognitionController extends Controller
                 'success' => false,
                 'message' => 'An active employee profile is required.',
             ], 403);
+        }
+
+        $validated = $request->validate([
+            'purpose' => ['nullable', 'string', 'in:attendance,device_registration'],
+            'device_uuid' => ['nullable', 'string', 'max:191'],
+            'public_key' => ['required_if:purpose,device_registration', 'nullable', 'string', 'max:4096'],
+        ]);
+        $purpose = $validated['purpose'] ?? 'attendance';
+        $deviceUuid = (string) ($request->header('X-Device-Id') ?? '');
+
+        if ($purpose === 'device_registration') {
+            if (!$deviceUuid || ($validated['device_uuid'] ?? null) !== $deviceUuid) {
+                throw ValidationException::withMessages([
+                    'device_uuid' => 'The device identity does not match this request.',
+                ]);
+            }
+            $this->deviceProofService->assertValid($request, $validated['public_key'], 'device_proof');
         }
 
         $credential = $employee->faceBiometricCredential()->first();
@@ -161,7 +167,9 @@ class FaceRecognitionController extends Controller
             ]);
         }
 
-        $threshold = (float) config('face-recognition.threshold', 0.60);
+        $threshold = $purpose === 'device_registration'
+            ? (float) config('face-recognition.device_registration_threshold', 0.45)
+            : (float) config('face-recognition.attendance_threshold', 0.45);
         $result = $this->faceRecognitionService->verificationResult(
             $credential->face_template,
             $embedding,
@@ -172,11 +180,17 @@ class FaceRecognitionController extends Controller
             $token = Str::random(64);
             $expiresAt = now()->addMinutes((int) config('face-recognition.verification_ttl_minutes', 2));
 
-            $deviceUuid = $request->input('device_uuid') ?? $request->header('X-Device-Id');
+            $requestedDeviceUuid = $validated['device_uuid'] ?? $request->header('X-Device-Id');
+            if ((string) ($requestedDeviceUuid ?? '') !== $deviceUuid) {
+                throw ValidationException::withMessages([
+                    'device_uuid' => 'The device identity does not match this request.',
+                ]);
+            }
 
             FaceVerificationToken::query()->create([
                 'employee_id' => $employee->id,
-                'device_uuid' => $deviceUuid,
+                'device_uuid' => $deviceUuid ?: $requestedDeviceUuid,
+                'purpose' => $purpose,
                 'token_hash' => hash('sha256', $token),
                 'expires_at' => $expiresAt,
             ]);

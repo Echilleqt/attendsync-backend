@@ -22,6 +22,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -290,14 +291,317 @@ class DynamicWorkScheduleAttendanceProcessingTest extends TestCase
         // Both leave at 16:30
         $departure = Carbon::parse('2026-10-19 16:30:00', 'Asia/Manila');
 
-        $attA = new Attendance(['pm_time_out' => $departure]);
-        $attB = new Attendance(['pm_time_out' => $departure]);
+        $attA = new Attendance([
+            'pm_time_in' => Carbon::parse('2026-10-19 13:00:00', 'Asia/Manila'),
+            'pm_time_out' => $departure,
+        ]);
+        $attB = new Attendance([
+            'pm_time_in' => Carbon::parse('2026-10-19 13:00:00', 'Asia/Manila'),
+            'pm_time_out' => $departure,
+        ]);
 
         // Emp A: scheduled pm_time_out is 16:30 -> 0 undertime minutes
         $this->assertEquals(0, $this->ruleService->calculateUndertime($attA, $schedA, '2026-10-19'));
 
         // Emp B: scheduled pm_time_out is 17:00 -> 30 undertime minutes
         $this->assertEquals(30, $this->ruleService->calculateUndertime($attB, $schedB, '2026-10-19'));
+    }
+
+    public function test_undertime_matches_dtr_minute_display_when_events_have_seconds(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Minute Precision Schedule',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '16:30:00',
+        ]);
+        $attendance = new Attendance([
+            'pm_time_in' => Carbon::parse('2026-10-19 13:00:42', 'Asia/Manila'),
+            'pm_time_out' => Carbon::parse('2026-10-19 16:20:58', 'Asia/Manila'),
+        ]);
+
+        $this->assertSame(
+            10,
+            $this->ruleService->calculateUndertime($attendance, $schedule, '2026-10-19')
+        );
+
+        $attendance->pm_time_out = Carbon::parse('2026-10-19 15:51:58', 'Asia/Manila');
+        $this->assertSame(
+            39,
+            $this->ruleService->calculateUndertime($attendance, $schedule, '2026-10-19')
+        );
+    }
+
+    public function test_dtr_reports_only_valid_early_departure_as_accumulated_undertime(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Undertime DTR Schedule',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'late_threshold_am' => '08:00:00',
+            'late_threshold_pm' => '13:00:00',
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-DTR-UNDERTIME', $schedule);
+        Attendance::create([
+            'employee_id' => $employee->id,
+            'schedule_id' => $schedule->id,
+            'attendance_date' => '2026-10-05',
+            'am_time_in' => '2026-10-05 08:30:00',
+            'am_time_out' => '2026-10-05 11:00:00',
+            'pm_time_in' => '2026-10-05 13:30:00',
+            'pm_time_out' => '2026-10-05 16:30:00',
+            'status' => 'late',
+        ]);
+
+        $dtr = app(DtrService::class)->generateMonthlyDtr($employee, '2026-10');
+
+        $this->assertSame(1, $dtr['days'][4]['undertime_hours']);
+        $this->assertSame(30, $dtr['days'][4]['undertime_minutes']);
+        $this->assertSame(1, $dtr['total_undertime_hours']);
+        $this->assertSame(30, $dtr['total_undertime_minutes']);
+    }
+
+    public function test_incomplete_session_and_legacy_aliases_do_not_create_dtr_departure_or_undertime(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Incomplete Session DTR Schedule',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'work_days' => ['monday'],
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-DTR-INCOMPLETE', $schedule);
+        $attendance = Attendance::create([
+            'employee_id' => $employee->id,
+            'schedule_id' => $schedule->id,
+            'attendance_date' => '2026-10-05',
+            'am_time_in' => '2026-10-05 08:00:00',
+            'time_out' => '2026-10-05 17:00:00',
+            'status' => 'incomplete',
+        ]);
+
+        $this->assertNull($attendance->am_time_out);
+        $this->assertNull($attendance->pm_time_out);
+        $this->assertSame(0, $this->ruleService->calculateUndertime($attendance, $schedule, '2026-10-05'));
+
+        $dtr = app(DtrService::class)->generateMonthlyDtr($employee, '2026-10');
+        $day = $dtr['days'][4];
+
+        $this->assertSame('', $day['am_out']);
+        $this->assertSame('', $day['pm_out']);
+        $this->assertSame('', $day['undertime_hours']);
+        $this->assertSame('', $day['undertime_minutes']);
+    }
+
+    public function test_misfiled_historical_am_events_are_hidden_and_undertime_is_withheld_until_review(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Historical session validation',
+            'am_time_in' => '07:30:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '16:30:00',
+            'work_days' => ['monday'],
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-DTR-MISFILED', $schedule);
+        $attendance = Attendance::create([
+            'employee_id' => $employee->id,
+            'schedule_id' => $schedule->id,
+            'attendance_date' => '2026-10-19',
+            'am_time_in' => '2026-10-19 15:06:13',
+            'am_time_out' => '2026-10-19 15:50:42',
+            'pm_time_in' => '2026-10-19 15:54:30',
+            'pm_time_out' => '2026-10-19 16:20:45',
+            'status' => 'late',
+            'am_status' => 'late',
+            'pm_status' => 'late',
+            'undertime_minutes' => 10,
+        ]);
+
+        $dtr = app(DtrService::class)->generateMonthlyDtr($employee, '2026-10');
+        $day = $dtr['days'][18];
+
+        $this->assertSame('', $day['am_in']);
+        $this->assertSame('', $day['am_out']);
+        $this->assertSame('3:54', $day['pm_in']);
+        $this->assertSame('4:20', $day['pm_out']);
+        $this->assertSame('incomplete', $day['am_status']);
+        $this->assertSame('incomplete', $day['status']);
+        $this->assertTrue($day['needs_review']);
+        $this->assertFalse($day['undertime_finalized']);
+        $this->assertSame('', $day['undertime_minutes']);
+        $this->assertFalse($dtr['total_undertime_finalized']);
+        $this->assertNull($dtr['total_undertime_hours']);
+        $this->assertNull($dtr['total_undertime_minutes']);
+
+        $this->artisan('attendance:repair-statuses', ['--id' => $attendance->id])
+            ->assertSuccessful();
+        $this->assertSame('late', $attendance->fresh()->status);
+        $this->assertSame(10, $attendance->fresh()->undertime_minutes);
+
+        $this->artisan('attendance:repair-statuses', [
+            '--id' => $attendance->id,
+            '--apply' => true,
+        ])->assertSuccessful();
+        $stored = $attendance->fresh();
+
+        $this->assertSame('incomplete', $stored->status);
+        $this->assertSame('incomplete', $stored->am_status);
+        $this->assertSame(0, $stored->undertime_minutes);
+        $this->assertSame('2026-10-19 15:06:13', $stored->am_time_in->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-19 15:50:42', $stored->am_time_out->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-19 15:54:30', $stored->pm_time_in->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-19 16:20:45', $stored->pm_time_out->format('Y-m-d H:i:s'));
+    }
+
+    public function test_attendance_event_columns_do_not_infer_events_from_legacy_fields(): void
+    {
+        $attendance = new Attendance([
+            'pm_time_in' => Carbon::parse('2026-10-19 13:05:00', 'Asia/Manila'),
+            'pm_time_out' => Carbon::parse('2026-10-19 16:30:00', 'Asia/Manila'),
+        ]);
+
+        $this->assertNull($attendance->am_time_in);
+        $this->assertNull($attendance->am_time_out);
+        $this->assertNull($attendance->time_in);
+        $this->assertNull($attendance->time_out);
+    }
+
+    public function test_morning_time_out_after_configured_session_end_is_rejected(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Session Boundary Validation',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'work_days' => ['monday'],
+        ]);
+        [$user, $employee] = $this->createEmployeeWithUser('EMP-INVALID-AM-OUT', $schedule);
+
+        Carbon::setTestNow(Carbon::parse('2026-10-19 08:00:00', 'Asia/Manila'));
+        $this->actingAs($user, 'api')->post('/api/attendance/morning-in', [
+            'face_verification_token' => $this->createFaceToken($employee),
+            'photo' => UploadedFile::fake()->image('am-in.jpg', 64, 64),
+        ], ['Accept' => 'application/json'])->assertCreated();
+
+        Carbon::setTestNow(Carbon::parse('2026-10-19 12:05:00', 'Asia/Manila'));
+        $this->actingAs($user, 'api')->post('/api/attendance/morning-out', [
+            'face_verification_token' => $this->createFaceToken($employee),
+            'photo' => UploadedFile::fake()->image('am-out.jpg', 64, 64),
+        ], ['Accept' => 'application/json'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('attendance');
+
+        $attendance = Attendance::where('employee_id', $employee->id)->firstOrFail();
+        $this->assertNull($attendance->am_time_out);
+        $this->assertNull($attendance->time_out);
+    }
+
+    public function test_historical_attendance_audit_reports_candidates_without_modifying_records(): void
+    {
+        Storage::fake('local');
+        $schedule = Schedule::create([
+            'name' => 'Historical Audit Schedule',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'work_days' => ['monday'],
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-HISTORY-AUDIT', $schedule);
+        $attendance = Attendance::create([
+            'employee_id' => $employee->id,
+            'schedule_id' => $schedule->id,
+            'attendance_date' => '2026-10-05',
+            'time_in' => '2026-10-05 07:55:00',
+            'status' => 'present',
+        ]);
+
+        $this->artisan('attendance:audit-repairs', [
+            '--from' => '2026-10-05',
+            '--to' => '2026-10-05',
+        ])->assertSuccessful();
+
+        $reportPath = collect(Storage::disk('local')->allFiles('attendance-repair-audit'))
+            ->first();
+        $this->assertNotNull($reportPath);
+        $report = json_decode(Storage::disk('local')->get($reportPath), true, flags: JSON_THROW_ON_ERROR);
+
+        $this->assertSame('read_only_dry_run', $report['mode']);
+        $this->assertSame('candidate', $report['records'][0]['classification']);
+        $this->assertSame('2026-10-05T07:55:00+08:00', $report['records'][0]['proposed']['am_time_in']);
+        $this->assertNull($attendance->fresh()->am_time_in);
+        $this->assertSame('2026-10-05 07:55:00', $attendance->fresh()->time_in->format('Y-m-d H:i:s'));
+    }
+
+    public function test_undertime_repair_changes_only_values_recalculated_from_valid_session_events(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Historical Undertime Repair',
+            'am_time_in' => '07:30:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '16:30:00',
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-UNDERTIME-REPAIR', $schedule);
+        $validPm = Attendance::create([
+            'employee_id' => $employee->id,
+            'schedule_id' => $schedule->id,
+            'attendance_date' => '2026-10-19',
+            'am_time_in' => '2026-10-19 15:06:13',
+            'am_time_out' => '2026-10-19 15:50:42',
+            'pm_time_in' => '2026-10-19 15:54:30',
+            'pm_time_out' => '2026-10-19 16:20:45',
+            'undertime_minutes' => 9,
+            'status' => 'late',
+        ]);
+        $incomplete = Attendance::create([
+            'employee_id' => $employee->id,
+            'schedule_id' => $schedule->id,
+            'attendance_date' => '2026-10-20',
+            'am_time_in' => '2026-10-20 07:30:00',
+            'pm_time_out' => '2026-10-20 15:00:00',
+            'time_out' => '2026-10-20 15:00:00',
+            'undertime_minutes' => 120,
+            'status' => 'incomplete',
+        ]);
+
+        $this->artisan('attendance:repair-undertime')->assertSuccessful();
+        $this->assertSame(9, $validPm->fresh()->undertime_minutes);
+        $this->assertSame(120, $incomplete->fresh()->undertime_minutes);
+
+        $this->artisan('attendance:repair-undertime', ['--apply' => true])->assertSuccessful();
+
+        $this->assertSame(0, $validPm->fresh()->undertime_minutes);
+        $this->assertSame(0, $incomplete->fresh()->undertime_minutes);
+        $this->assertSame('2026-10-19 15:06:13', $validPm->fresh()->am_time_in->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-19 15:50:42', $validPm->fresh()->am_time_out->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-10-20 15:00:00', $incomplete->fresh()->time_out->format('Y-m-d H:i:s'));
+        $this->assertSame('incomplete', $incomplete->fresh()->status);
+    }
+
+    public function test_dtr_does_not_infer_schedule_or_absence_when_no_schedule_is_configured(): void
+    {
+        Schedule::create([
+            'name' => 'Unassigned Schedule Template',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'is_default' => false,
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-DTR-NO-SCHEDULE');
+
+        $dtr = app(DtrService::class)->generateMonthlyDtr($employee, '2026-10');
+
+        $this->assertSame('Not configured', $dtr['prescribed_hours']);
+        $this->assertFalse($dtr['days'][0]['schedule_configured']);
+        $this->assertSame('', $dtr['days'][0]['status']);
     }
 
     /**
@@ -324,6 +628,30 @@ class DynamicWorkScheduleAttendanceProcessingTest extends TestCase
         $this->assertEquals('absent', $statusAfter);
     }
 
+    public function test_morning_only_absence_is_not_reported_as_a_full_day_absence_before_pm_deadline(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'AM-only absence evaluation',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'work_days' => ['monday'],
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-AM-ABSENT', $schedule);
+
+        $stats = $this->ruleService->processAbsencesForDate(
+            '2026-10-19',
+            Carbon::parse('2026-10-19 12:30:00', 'Asia/Manila')
+        );
+        $record = Attendance::where('employee_id', $employee->id)->firstOrFail();
+
+        $this->assertSame(1, $stats['absences_created']);
+        $this->assertSame('absent', $record->am_status);
+        $this->assertNull($record->pm_status);
+        $this->assertSame('incomplete', $record->status);
+    }
+
     /**
      * Requirement 7: Missing Time Out with valid Time In becomes incomplete
      */
@@ -343,6 +671,29 @@ class DynamicWorkScheduleAttendanceProcessingTest extends TestCase
         // Valid AM Time In, but AM session has ended and AM Time Out is missing => INCOMPLETE
         $status = $this->ruleService->evaluateAmStatus($amIn, null, $sched, '2026-10-19', $afterShift);
         $this->assertEquals('incomplete', $status);
+    }
+
+    public function test_absence_processing_dry_run_reports_changes_without_persisting_them(): void
+    {
+        $schedule = Schedule::create([
+            'name' => 'Dry Run Absence Schedule',
+            'am_time_in' => '08:00:00',
+            'am_time_out' => '12:00:00',
+            'pm_time_in' => '13:00:00',
+            'pm_time_out' => '17:00:00',
+            'work_days' => ['monday'],
+        ]);
+        [, $employee] = $this->createEmployeeWithUser('EMP-ABSENCE-DRY-RUN', $schedule);
+
+        $stats = $this->ruleService->processAbsencesForDate(
+            '2026-10-19',
+            Carbon::parse('2026-10-19 18:00:00', 'Asia/Manila'),
+            true
+        );
+
+        $this->assertTrue($stats['dry_run']);
+        $this->assertSame(1, $stats['absences_would_be_created']);
+        $this->assertSame(0, Attendance::where('employee_id', $employee->id)->count());
     }
 
     /**

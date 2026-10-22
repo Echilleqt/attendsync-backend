@@ -5,7 +5,7 @@
 @section('page_description', 'Configure 4-entry daily shifts, template schedules, and individual employee assignments.')
 
 @section('content')
-<section class="employee-page">
+<section class="employee-page schedule-management-page">
     <div class="employee-heading">
         <div>
             <span class="school-label">BANSUD CENTRAL SCHOOL</span>

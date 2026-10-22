@@ -131,7 +131,7 @@
             <tbody>
                 @foreach($dtrData['days'] as $row)
                 <tr>
-                    <td style="font-weight:bold;">{{ $row['day'] }}</td>
+                    <td style="font-weight:bold;">{{ $row['day'] }}@if($row['needs_review'])<sup>*</sup>@endif</td>
                     <td>{{ $row['am_in'] }}</td>
                     <td>{{ $row['am_out'] }}</td>
                     <td>{{ $row['pm_in'] }}</td>
@@ -147,6 +147,10 @@
                 </tr>
             </tbody>
         </table>
+
+        @if(collect($dtrData['days'])->contains('needs_review', true))
+            <div style="font-size:9pt; margin-top:6px;">* Incomplete or mismatched attendance session. Recorded times were not changed; review and resolve the attendance record. Undertime totals are withheld while a record is unresolved.</div>
+        @endif
 
         <div class="certification">
             I certify on my honor that the above is a true and correct report of the hours of work performed, record of which was made daily at the time of arrival and departure from office.

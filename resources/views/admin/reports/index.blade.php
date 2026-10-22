@@ -6,20 +6,6 @@
 
 @section('content')
 <section class="employee-page">
-    @if ($errors->any())
-        <div class="alert alert-danger">
-            <x-lucide-triangle-alert class="alert-icon" aria-hidden="true" />
-            <div>
-                <strong>Please resolve the following errors:</strong>
-                <ul>
-                    @foreach ($errors->all() as $error)
-                        <li>{{ $error }}</li>
-                    @endforeach
-                </ul>
-            </div>
-        </div>
-    @endif
-
     <div class="employee-heading">
         <div>
             <span class="school-label">BANSUD CENTRAL SCHOOL</span>

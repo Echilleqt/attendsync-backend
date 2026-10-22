@@ -24,11 +24,19 @@ class EmployeeController extends Controller
      */
     public function index(Request $request): View
     {
-        $search = $request->query('search');
-        $departmentId = $request->query('department_id');
-        $positionId = $request->query('position_id');
-        $scheduleId = $request->query('schedule_id');
-        $status = $request->query('status');
+        $filters = $request->validate([
+            'search' => ['nullable', 'string', 'max:255'],
+            'department_id' => ['nullable', 'exists:departments,id'],
+            'position_id' => ['nullable', 'exists:positions,id'],
+            'schedule_id' => ['nullable', 'exists:schedules,id'],
+            'status' => ['nullable', 'in:active,inactive'],
+        ]);
+
+        $search = $filters['search'] ?? null;
+        $departmentId = $filters['department_id'] ?? null;
+        $positionId = $filters['position_id'] ?? null;
+        $scheduleId = $filters['schedule_id'] ?? null;
+        $status = $filters['status'] ?? null;
 
         $query = Employee::with([
             'user',
